@@ -81,6 +81,26 @@ h1, h2, h3, .pixel-font,
   text-shadow: 3px 3px 0 var(--accent), 6px 6px 0 rgba(0,0,0,0.4);
 }
 
+/* sync status pill */
+.sync-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: "Press Start 2P"; font-size: 7px;
+  padding: 5px 7px; margin-left: 4px;
+  background: var(--bg-1); border: 2px solid var(--panel-edge);
+  color: var(--ink-dim); white-space: nowrap;
+}
+.sync-dot {
+  width: 8px; height: 8px; background: var(--ink-dim);
+  box-shadow: 0 0 0 1px #000;
+}
+.sync-pill.live { color: var(--accent-2); border-color: var(--accent-2); }
+.sync-pill.live .sync-dot { background: var(--accent-2); animation: livePulse 1.4s steps(2) infinite; }
+.sync-pill.local { color: var(--ink-dim); }
+.sync-pill.local .sync-dot { background: var(--gold); }
+@keyframes livePulse { 50% { opacity: 0.3; } }
+
+.mini-btn.armed { background: var(--good); color: #04231d; border-color: #04231d; }
+
 .stats { display: flex; gap: 14px; align-items: center; }
 .stat {
   display: flex; align-items: center; gap: 8px;

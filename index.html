@@ -10,6 +10,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%237b5cff'/><rect x='4' y='5' width='2' height='2' fill='white'/><rect x='10' y='5' width='2' height='2' fill='white'/><rect x='5' y='10' width='6' height='2' fill='white'/></svg>" />
+  <!-- data layer (realtime sync + push); falls back to on-device if not configured -->
+  <script type="module" src="store.js"></script>
 </head>
 <body>
   <!-- Animated starfield background -->
@@ -23,6 +25,9 @@
       <div class="logo">
         <span class="logo-mark" aria-hidden="true">►</span>
         <h1>PIXEL&nbsp;PAL</h1>
+        <span class="sync-pill" id="syncPill" title="Connection status">
+          <span class="sync-dot"></span><span id="syncText">…</span>
+        </span>
       </div>
       <div class="stats">
         <div class="stat" title="Tasks completed give XP. Level up!">
@@ -86,6 +91,7 @@
         <div class="list-head">
           <h2>YOUR QUESTS</h2>
           <div class="list-actions">
+            <button class="mini-btn" id="alertsBtn" title="Turn on phone notifications">🔔 alerts</button>
             <button class="mini-btn" id="addManualBtn" title="Type a task instead">⌨ type</button>
             <button class="mini-btn" id="soundBtn" title="Toggle sound">🔊</button>
           </div>
@@ -133,6 +139,6 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script defer src="app.js"></script>
 </body>
 </html>

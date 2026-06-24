@@ -1,30 +1,99 @@
 /* ============================================================
    PIXEL PAL — app logic
    Voice capture, reminders, gamification, the pixel buddy.
-   No external libraries. Everything is vanilla JS.
+
+   Data lives behind a "Store":
+     - SHARED mode (Firebase): tasks sync live across every device, and
+       a Cloud Function pushes reminders to phones even when closed.
+     - LOCAL mode (no Firebase): tasks live in localStorage on this device.
+   Either way the UI is identical. Your XP / level / streak is always
+   per-device (in localStorage) — only the task list is shared.
+
+   No external libraries in this file. store.js handles Firebase.
    ============================================================ */
 (() => {
   "use strict";
 
-  /* ---------------- state ---------------- */
-  const LS_KEY = "pixelpal.v1";
-  const state = loadState();
-
-  function loadState() {
+  /* ---------------- per-device profile (never shared) ---------------- */
+  const PROFILE_KEY = "pixelpal.profile.v1";
+  const profile = loadProfile();
+  function loadProfile() {
     try {
-      const raw = JSON.parse(localStorage.getItem(LS_KEY));
-      if (raw && Array.isArray(raw.tasks)) return raw;
+      const raw = JSON.parse(localStorage.getItem(PROFILE_KEY));
+      if (raw && typeof raw === "object") return Object.assign(defProfile(), raw);
     } catch (_) {}
-    return {
-      tasks: [],
-      xp: 0,
-      level: 1,
-      streak: 0,
-      lastDoneDay: null,
-      sound: true,
-    };
+    // migrate old combined state if present
+    try {
+      const old = JSON.parse(localStorage.getItem("pixelpal.v1"));
+      if (old) return Object.assign(defProfile(), {
+        xp: old.xp, level: old.level, streak: old.streak,
+        lastDoneDay: old.lastDoneDay, sound: old.sound,
+      });
+    } catch (_) {}
+    return defProfile();
   }
-  function save() { localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+  function defProfile() {
+    return { xp: 0, level: 1, streak: 0, lastDoneDay: null, sound: true, pushAsked: false };
+  }
+  function saveProfile() { localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); }
+
+  /* ---------------- built-in LOCAL store (fallback) ---------------- */
+  const LocalStore = (() => {
+    const KEY = "pixelpal.tasks.v1";
+    let tasks = load();
+    const subs = [];
+    function load() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(KEY));
+        if (Array.isArray(raw)) return raw;
+        const old = JSON.parse(localStorage.getItem("pixelpal.v1"));
+        if (old && Array.isArray(old.tasks)) return old.tasks;
+      } catch (_) {}
+      return [];
+    }
+    function persist() { localStorage.setItem(KEY, JSON.stringify(tasks)); }
+    function emit() { subs.forEach((cb) => cb(tasks.slice())); }
+    return {
+      mode: "local",
+      subscribe(cb) { subs.push(cb); cb(tasks.slice()); },
+      onPush() {},
+      async add(task) { tasks.unshift(task); persist(); emit(); },
+      async update(id, patch) {
+        const t = tasks.find((x) => x.id === id);
+        if (t) { Object.assign(t, patch); persist(); emit(); }
+      },
+      async remove(id) { tasks = tasks.filter((x) => x.id !== id); persist(); emit(); },
+      async clearDone() { tasks = tasks.filter((x) => !x.done); persist(); emit(); },
+      async enablePush() {
+        if (!("Notification" in window)) return "denied";
+        let perm = Notification.permission;
+        if (perm === "default") perm = await Notification.requestPermission();
+        return perm === "granted" ? "local" : "denied";
+      },
+    };
+  })();
+
+  /* ---------------- pick which store to use ---------------- */
+  let Store = LocalStore;          // replaced by Firebase store if available
+  let tasks = [];                  // mirror of the current task list
+
+  function bootStore() {
+    return new Promise((resolve) => {
+      let settled = false;
+      const decide = () => {
+        if (settled) return true;
+        if (window.PixelStore) { settled = true; resolve(window.PixelStore); return true; }
+        if (window.__pixelStoreLocal) { settled = true; resolve(LocalStore); return true; }
+        return false;
+      };
+      if (decide()) return;
+      window.addEventListener("pixelstore-ready", decide, { once: true });
+      window.addEventListener("pixelstore-local", decide, { once: true });
+      // If Firebase is mid-load, wait longer; otherwise fall back quickly.
+      const wait = window.__pixelStorePending ? 9000 : 2000;
+      setTimeout(() => { if (!settled) { settled = true; resolve(LocalStore); } }, wait);
+    });
+  }
 
   /* ---------------- dom ---------------- */
   const $ = (id) => document.getElementById(id);
@@ -45,6 +114,7 @@
     xpFill: $("xpFill"),
     toastStack: $("toastStack"),
     soundBtn: $("soundBtn"),
+    alertsBtn: $("alertsBtn"),
     addManualBtn: $("addManualBtn"),
     manualModal: $("manualModal"),
     manualInput: $("manualInput"),
@@ -54,6 +124,8 @@
     levelupText: $("levelupText"),
     buddyCanvas: $("buddy"),
     stars: $("stars"),
+    syncPill: $("syncPill"),
+    syncText: $("syncText"),
   };
 
   let selectedDelayMin = 0;
@@ -70,7 +142,7 @@
     return audioCtx;
   }
   function beep(freq, dur = 0.09, type = "square", vol = 0.05, when = 0) {
-    if (!state.sound) return;
+    if (!profile.sound) return;
     const ctx = ac(); if (!ctx) return;
     const t = ctx.currentTime + when;
     const osc = ctx.createOscillator();
@@ -83,20 +155,20 @@
     osc.start(t); osc.stop(t + dur);
   }
   const sfx = {
-    add:    () => { beep(523,0.07); beep(784,0.09,"square",0.05,0.07); },
-    done:   () => { beep(523,0.07); beep(659,0.07,"square",0.05,0.07); beep(988,0.14,"square",0.05,0.14); },
-    remind: () => { beep(880,0.1); beep(880,0.1,"square",0.05,0.16); },
-    levelup:() => { [523,659,784,1047].forEach((f,i)=>beep(f,0.12,"square",0.06,i*0.1)); },
-    listen: () => { beep(440,0.06,"sine",0.04); },
-    click:  () => { beep(330,0.04,"square",0.03); },
-    error:  () => { beep(180,0.18,"sawtooth",0.05); },
+    add:     () => { beep(523, 0.07); beep(784, 0.09, "square", 0.05, 0.07); },
+    done:    () => { beep(523, 0.07); beep(659, 0.07, "square", 0.05, 0.07); beep(988, 0.14, "square", 0.05, 0.14); },
+    remind:  () => { beep(880, 0.1); beep(880, 0.1, "square", 0.05, 0.16); },
+    levelup: () => { [523, 659, 784, 1047].forEach((f, i) => beep(f, 0.12, "square", 0.06, i * 0.1)); },
+    listen:  () => { beep(440, 0.06, "sine", 0.04); },
+    click:   () => { beep(330, 0.04, "square", 0.03); },
+    error:   () => { beep(180, 0.18, "sawtooth", 0.05); },
   };
 
   /* ============================================================
      SPEECH SYNTHESIS — buddy speaks reminders aloud
      ============================================================ */
   function speak(text) {
-    if (!state.sound || !("speechSynthesis" in window)) return;
+    if (!profile.sound || !("speechSynthesis" in window)) return;
     try {
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.02; u.pitch = 1.25; u.volume = 0.9;
@@ -112,81 +184,58 @@
     const cv = els.buddyCanvas;
     const ctx = cv.getContext("2d");
     ctx.imageSmoothingEnabled = false;
-    const GRID = 16;            // 16x16 sprite
+    const GRID = 16;
     const CELL = cv.width / GRID;
-    let mood = "idle";          // idle | listen | happy | think
+    let mood = "idle";
     let frame = 0;
 
-    // palette
     const C = {
       _: null,
-      B: "#1a1640", // body shadow / outline
-      P: "#7b5cff", // body purple
-      L: "#a98bff", // light purple
-      W: "#ffffff", // eye white
-      K: "#101024", // pupil
-      C: "#00e5c0", // cheek/teal accent
-      M: "#ff4f9a", // mouth pink
-      Y: "#ffd23f", // antenna bulb
+      B: "#1a1640", P: "#7b5cff", L: "#a98bff", W: "#ffffff",
+      K: "#101024", C: "#00e5c0", M: "#ff4f9a", Y: "#ffd23f",
     };
 
-    // base sprite (blink/mouth swapped per frame). 16 rows x 16 cols.
     function sprite(eyesOpen, mouth) {
       const e = eyesOpen ? "W" : "B";
       const p = eyesOpen ? "K" : "B";
-      // mouth: 'smile' | 'o' | 'flat'  (each is exactly 4 cells)
-      const rows = [
+      return [
         "______YY________",
         "______BB________",
         "______BB________",
         "____BBBBBB______",
         "___BPPPPPPB_____",
         "__BPLLLLLLPB____",
-        "__BP"+e+e+"PP"+e+e+"PB____",
-        "__BP"+e+p+"PP"+e+p+"PB____",
+        "__BP" + e + e + "PP" + e + e + "PB____",
+        "__BP" + e + p + "PP" + e + p + "PB____",
         "__BPPPPPPPPB____",
         "_BPCPPPPPPCPB___",
-        "_BPP"+mline(mouth)+"PPPPB___",
+        "_BPP" + mline(mouth) + "PPPPB___",
         "_BPPPPPPPPPPB___",
         "__BPPPPPPPPB____",
         "___BPP__PPB_____",
         "___BB____BB_____",
         "________________",
       ];
-      return rows;
     }
     function mline(mouth) {
       if (mouth === "smile") return "MMMM";
-      if (mouth === "o")     return "MKKM"; // open mouth (chatter)
-      return "BMMB";                        // small flat mouth
+      if (mouth === "o") return "MKKM";
+      return "BMMB";
     }
 
     function draw() {
       frame++;
       ctx.clearRect(0, 0, cv.width, cv.height);
-
-      let eyesOpen = true;
-      let mouth = "smile";
-
-      if (mood === "idle") {
-        eyesOpen = (frame % 140) > 6;          // occasional blink
-        mouth = "smile";
-      } else if (mood === "listen") {
-        eyesOpen = true;
-        mouth = (frame % 20 < 10) ? "o" : "smile"; // chatter
-      } else if (mood === "happy") {
-        eyesOpen = (frame % 16 < 8);            // wink-y
-        mouth = "smile";
-      } else if (mood === "think") {
-        eyesOpen = (frame % 60) > 6;
-        mouth = "flat";
-      }
+      let eyesOpen = true, mouth = "smile";
+      if (mood === "idle") { eyesOpen = (frame % 140) > 6; mouth = "smile"; }
+      else if (mood === "listen") { eyesOpen = true; mouth = (frame % 20 < 10) ? "o" : "smile"; }
+      else if (mood === "happy") { eyesOpen = (frame % 16 < 8); mouth = "smile"; }
+      else if (mood === "think") { eyesOpen = (frame % 60) > 6; mouth = "flat"; }
 
       const rows = sprite(eyesOpen, mouth);
       for (let y = 0; y < GRID; y++) {
         for (let x = 0; x < GRID; x++) {
-          const ch = rows[y][x];
-          const col = C[ch];
+          const col = C[rows[y][x]];
           if (!col) continue;
           ctx.fillStyle = col;
           ctx.fillRect(Math.round(x * CELL), Math.round(y * CELL),
@@ -225,8 +274,7 @@
     function resize() {
       cv.width = window.innerWidth; cv.height = window.innerHeight;
       stars = Array.from({ length: 90 }, () => ({
-        x: Math.random() * cv.width,
-        y: Math.random() * cv.height,
+        x: Math.random() * cv.width, y: Math.random() * cv.height,
         s: Math.random() < 0.8 ? 2 : 3,
         sp: 0.15 + Math.random() * 0.5,
         tw: Math.random() * Math.PI * 2,
@@ -250,31 +298,25 @@
 
   /* ============================================================
      NATURAL-ish TIME PARSING from spoken text
-     "...in 10 minutes", "in 2 hours", "tomorrow", "at 5"
-     Returns { cleanText, delayMs|null }
      ============================================================ */
   function parseWhen(text) {
     let t = " " + text.toLowerCase() + " ";
     let delayMs = null;
+    const numWords = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5,
+      six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20,
+      thirty: 30, forty: 40, fifty: 50, sixty: 60, half: 0.5 };
+    const unitMs = { sec: 1000, min: 60000, hour: 3600000, day: 86400000 };
 
-    const numWords = { a:1, an:1, one:1, two:2, three:3, four:4, five:5,
-      six:6, seven:7, eight:8, nine:9, ten:10, fifteen:15, twenty:20,
-      thirty:30, forty:40, fifty:50, sixty:60, half:0.5 };
-
-    const unitMs = { sec:1000, second:1000, min:60000, minute:60000,
-      hour:3600000, hr:3600000, day:86400000 };
-
-    // "in 10 minutes" / "in two hours" / "in half an hour"
     const m = t.match(/\bin\s+([a-z0-9.]+)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)\b/);
     if (m) {
       let n = parseFloat(m[1]);
       if (isNaN(n)) n = numWords[m[1]] ?? null;
       if (n != null) {
         const u = m[2];
-        let per = u.startsWith("sec") ? unitMs.sec
-                : u.startsWith("min") ? unitMs.min
-                : u.startsWith("hour")||u.startsWith("hr") ? unitMs.hour
-                : unitMs.day;
+        const per = u.startsWith("sec") ? unitMs.sec
+                  : u.startsWith("min") ? unitMs.min
+                  : (u.startsWith("hour") || u.startsWith("hr")) ? unitMs.hour
+                  : unitMs.day;
         delayMs = n * per;
         t = t.replace(m[0], " ");
       }
@@ -284,7 +326,6 @@
       delayMs = 6 * 3600000; t = t.replace(/\btonight\b/, " ");
     }
 
-    // strip leading filler
     let clean = t.replace(/\b(remind me to|remind me|remember to|remember|note to self|note that|to)\b/g, " ")
                  .replace(/\s+/g, " ").trim();
     if (clean) clean = clean[0].toUpperCase() + clean.slice(1);
@@ -292,9 +333,9 @@
   }
 
   /* ============================================================
-     TASKS
+     TASKS  (all writes go through Store)
      ============================================================ */
-  function addTask(text, delayMsOverride) {
+  async function addTask(text, delayMsOverride) {
     const parsed = parseWhen(text);
     let delay = delayMsOverride;
     if (delay == null) {
@@ -305,18 +346,17 @@
       text: parsed.cleanText,
       created: Date.now(),
       remindAt: Date.now() + (delay || 0),
-      repeat: els.repeatToggle.checked,
+      repeat: !!els.repeatToggle.checked,
       done: false,
       notified: false,
     };
-    state.tasks.unshift(task);
-    save();
-    render();
     sfx.add();
     buddy.setMood("happy", 1500);
-    const whenTxt = delay ? "I'll remind you " + humanDelay(delay) : "got it, on your list!";
-    say('"' + truncate(task.text, 40) + '" — ' + whenTxt);
-    return task;
+    const whenTxt = delay ? "I'll remind you " + humanDelay(delay) : "got it, on the list!";
+    const shared = Store.mode === "firebase" ? " (everyone sees it)" : "";
+    say('"' + truncate(task.text, 36) + '" — ' + whenTxt + shared);
+    ensureAlerts();
+    await Store.add(task);
   }
 
   function humanDelay(ms) {
@@ -330,122 +370,119 @@
   function truncate(s, n) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
   function completeTask(id, ev) {
-    const task = state.tasks.find((t) => t.id === id);
+    const task = tasks.find((t) => t.id === id);
     if (!task || task.done) return;
-    task.done = true; task.repeat = false;
     sfx.done();
     buddy.setMood("happy", 2000);
     grantXp(15, ev);
     bumpStreak();
     say(pick(["Nice one! 🎉", "Quest complete!", "You did it! ⭐", "Boom. Done."]));
-    save(); render();
+    Store.update(id, { done: true, repeat: false, notified: true });
   }
 
-  function deleteTask(id) {
-    state.tasks = state.tasks.filter((t) => t.id !== id);
-    sfx.click(); save(); render();
-  }
-
-  function clearCompleted() {
-    state.tasks = state.tasks.filter((t) => !t.done);
-    sfx.click(); save(); render();
-  }
+  function deleteTask(id) { sfx.click(); Store.remove(id); }
+  function clearCompleted() { sfx.click(); Store.clearDone(); }
 
   /* ============================================================
-     GAMIFICATION
+     GAMIFICATION  (per-device)
      ============================================================ */
   function xpForLevel(lvl) { return 50 + (lvl - 1) * 40; }
-
   function grantXp(amount, ev) {
-    state.xp += amount;
+    profile.xp += amount;
     floatXp("+" + amount + " XP", ev);
     let leveled = false;
-    while (state.xp >= xpForLevel(state.level)) {
-      state.xp -= xpForLevel(state.level);
-      state.level++;
+    while (profile.xp >= xpForLevel(profile.level)) {
+      profile.xp -= xpForLevel(profile.level);
+      profile.level++;
       leveled = true;
     }
     if (leveled) showLevelUp();
-    save(); renderStats();
+    saveProfile(); renderStats();
   }
-
   function bumpStreak() {
     const today = new Date().toDateString();
-    if (state.lastDoneDay === today) return;
+    if (profile.lastDoneDay === today) return;
     const yesterday = new Date(Date.now() - 86400000).toDateString();
-    state.streak = state.lastDoneDay === yesterday ? state.streak + 1 : 1;
-    state.lastDoneDay = today;
-    save();
+    profile.streak = profile.lastDoneDay === yesterday ? profile.streak + 1 : 1;
+    profile.lastDoneDay = today;
+    saveProfile();
   }
-
   function showLevelUp() {
     sfx.levelup();
-    els.levelupText.textContent = "You reached Level " + state.level;
+    els.levelupText.textContent = "You reached Level " + profile.level;
     els.levelup.hidden = false;
     setTimeout(() => { els.levelup.hidden = true; }, 1800);
   }
-
   function floatXp(txt, ev) {
     const pop = document.createElement("div");
     pop.className = "xp-pop";
     pop.textContent = txt;
-    const x = ev ? ev.clientX : window.innerWidth / 2;
-    const y = ev ? ev.clientY : window.innerHeight / 2;
-    pop.style.left = x + "px"; pop.style.top = y + "px";
+    pop.style.left = (ev ? ev.clientX : innerWidth / 2) + "px";
+    pop.style.top = (ev ? ev.clientY : innerHeight / 2) + "px";
     document.body.appendChild(pop);
     setTimeout(() => pop.remove(), 1000);
   }
 
   /* ============================================================
-     REMINDER SCHEDULER + NOTIFICATIONS
+     REMINDER SCHEDULER
+       - local mode: this client fires AND advances task state.
+       - firebase mode: the Cloud Function is authoritative for firing
+         (so phones ring when closed). This client only shows an in-app
+         reminder for tasks that are due, once each, so open tabs react.
      ============================================================ */
-  function fireReminder(task) {
+  const shownLocally = new Set(); // `${id}@${remindAt}` keys, firebase mode
+
+  function presentReminder(task) {
     sfx.remind();
     buddy.setMood("happy", 4000);
-    say("⏰ Reminder: " + truncate(task.text, 44));
+    say("⏰ Reminder: " + truncate(task.text, 40));
     speak("Reminder. " + task.text);
     pushToast(task);
+    nativeNotify("⏰ Pixel Pal reminder", task.text, task.id);
+  }
 
-    // native OS notification when permitted
+  function nativeNotify(title, body, tag) {
     if ("Notification" in window && Notification.permission === "granted") {
       try {
-        const n = new Notification("⏰ Pixel Pal reminder", {
-          body: task.text,
-          tag: task.id,
-          icon: faviconDataUrl(),
-        });
+        const n = new Notification(title, { body, tag, icon: faviconDataUrl() });
         n.onclick = () => { window.focus(); n.close(); };
       } catch (_) {}
     }
-
-    if (task.repeat) {
-      // nag again in 5 minutes until done
-      task.remindAt = Date.now() + 5 * 60000;
-      task.notified = false;
-    } else {
-      task.notified = true;
-    }
-    save();
-    render();
   }
 
   function tickReminders() {
     const now = Date.now();
-    for (const t of state.tasks) {
-      if (t.done) continue;
-      if (!t.notified && t.remindAt <= now) {
-        fireReminder(t);
+    if (Store.mode === "local") {
+      for (const t of tasks) {
+        if (t.done || t.notified) continue;
+        if ((t.remindAt || 0) <= now) {
+          presentReminder(t);
+          if (t.repeat) Store.update(t.id, { remindAt: now + 5 * 60000, notified: false });
+          else Store.update(t.id, { notified: true });
+        }
+      }
+    } else {
+      // firebase: present once per (id, remindAt); function owns state.
+      for (const t of tasks) {
+        if (t.done) continue;
+        if ((t.remindAt || 0) <= now && !t.notified) {
+          const key = t.id + "@" + t.remindAt;
+          if (!shownLocally.has(key)) {
+            shownLocally.add(key);
+            // avoid replaying very old reminders on first load
+            if (now - (t.remindAt || 0) < 90 * 1000) presentReminder(t);
+          }
+        }
       }
     }
     markDueVisuals();
   }
-  setInterval(tickReminders, 1000);
 
   function markDueVisuals() {
     document.querySelectorAll(".task-item").forEach((el) => {
-      const t = state.tasks.find((x) => x.id === el.dataset.id);
+      const t = tasks.find((x) => x.id === el.dataset.id);
       if (!t) return;
-      el.classList.toggle("due", !t.done && t.notified && t.repeat);
+      el.classList.toggle("due", !t.done && t.repeat && (t.remindAt || 0) <= Date.now());
     });
   }
 
@@ -463,26 +500,61 @@
         </div>
       </div>`;
     el.querySelector(".toast-msg").textContent = task.text;
-    el.querySelector(".toast-done").onclick = (e) => {
-      completeTask(task.id, e); removeToast(el);
-    };
+    el.querySelector(".toast-done").onclick = (e) => { completeTask(task.id, e); removeToast(el); };
     el.querySelector(".toast-snooze").onclick = () => {
-      task.remindAt = Date.now() + 10 * 60000;
-      task.notified = false;
-      save(); render(); removeToast(el); sfx.click();
-      say("Snoozed 10 min ⏳");
+      Store.update(task.id, { remindAt: Date.now() + 10 * 60000, notified: false });
+      removeToast(el); sfx.click(); say("Snoozed 10 min ⏳");
     };
     els.toastStack.appendChild(el);
     setTimeout(() => { if (el.isConnected) removeToast(el); }, 12000);
   }
-  function removeToast(el) {
-    el.classList.add("leaving");
-    setTimeout(() => el.remove(), 300);
+  function removeToast(el) { el.classList.add("leaving"); setTimeout(() => el.remove(), 300); }
+
+  function infoToast(title, msg) {
+    const el = document.createElement("div");
+    el.className = "toast";
+    el.innerHTML = `<div class="toast-ico">🔔</div><div class="toast-body">
+      <div class="toast-title"></div><div class="toast-msg"></div></div>`;
+    el.querySelector(".toast-title").textContent = title;
+    el.querySelector(".toast-msg").textContent = msg;
+    els.toastStack.appendChild(el);
+    setTimeout(() => { if (el.isConnected) removeToast(el); }, 6000);
   }
 
   function faviconDataUrl() {
     return "data:image/svg+xml," + encodeURIComponent(
       "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#7b5cff'/><rect x='4' y='5' width='2' height='2' fill='white'/><rect x='10' y='5' width='2' height='2' fill='white'/><rect x='5' y='10' width='6' height='2' fill='white'/></svg>");
+  }
+
+  /* ============================================================
+     PUSH / NOTIFICATIONS opt-in
+     ============================================================ */
+  let alertsState = "off"; // off | local | push | denied
+  async function ensureAlerts(force) {
+    if (!force && (profile.pushAsked || alertsState === "push")) return;
+    profile.pushAsked = true; saveProfile();
+    try {
+      const res = await Store.enablePush();
+      alertsState = res;
+      reflectAlerts();
+      if (force) {
+        if (res === "push") infoToast("Phone alerts ON", "I'll ring this phone even when the site is closed. 🔔");
+        else if (res === "local") infoToast("Notifications ON", "You'll get alerts while this tab is open.");
+        else if (res === "denied") infoToast("Notifications blocked", "Enable them in your browser to get reminders.");
+      }
+    } catch (_) {}
+  }
+  function reflectAlerts() {
+    const on = alertsState === "push" || alertsState === "local";
+    els.alertsBtn.classList.toggle("armed", on);
+    els.alertsBtn.textContent = alertsState === "push" ? "🔔 on"
+      : alertsState === "local" ? "🔔 tab"
+      : alertsState === "denied" ? "🔕 off" : "🔔 alerts";
+    els.alertsBtn.title = alertsState === "push"
+      ? "Phone push is on — rings even when closed"
+      : alertsState === "local"
+      ? "In-app alerts on (open the deployed site for full phone push)"
+      : "Turn on phone notifications";
   }
 
   /* ============================================================
@@ -494,11 +566,7 @@
   function initRecognition() {
     if (!SR) return null;
     const r = new SR();
-    r.lang = "en-US";
-    r.interimResults = true;
-    r.continuous = false;
-    r.maxAlternatives = 1;
-
+    r.lang = "en-US"; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
     r.onstart = () => {
       listening = true;
       els.micBtn.classList.add("listening");
@@ -511,11 +579,8 @@
       listening = false;
       els.micBtn.classList.remove("listening");
       buddy.setMood("idle");
-      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-        say("I need mic permission to hear you 🎙️");
-      } else if (e.error === "no-speech") {
-        say("Didn't catch that — try again?");
-      }
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") say("I need mic permission to hear you 🎙️");
+      else if (e.error === "no-speech") say("Didn't catch that — try again?");
       sfx.error();
     };
     r.onend = () => {
@@ -531,42 +596,29 @@
         if (ev.results[i].isFinal) final += txt; else interim += txt;
       }
       els.liveTranscript.textContent = interim || final;
-      if (final.trim()) {
-        els.liveTranscript.textContent = "";
-        addTask(final.trim());
-      }
+      if (final.trim()) { els.liveTranscript.textContent = ""; addTask(final.trim()); }
     };
     return r;
   }
 
   function startListening() {
     ac(); // unlock audio on user gesture
-    if (!SR) {
-      say("Voice isn't supported here — type instead ⌨️");
-      openModal();
-      return;
-    }
+    ensureAlerts();
+    if (!SR) { say("Voice isn't supported here — type instead ⌨️"); openModal(); return; }
     if (listening) { try { recog.stop(); } catch (_) {} return; }
     recog = recog || initRecognition();
-    ensureNotifyPermission();
     try { recog.start(); } catch (_) {}
-  }
-
-  function ensureNotifyPermission() {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
   }
 
   /* ============================================================
      RENDER
      ============================================================ */
   function render() {
-    const active = state.tasks.filter((t) => !t.done);
-    els.emptyState.hidden = state.tasks.length > 0;
+    const active = tasks.filter((t) => !t.done);
+    els.emptyState.hidden = tasks.length > 0;
     els.taskList.innerHTML = "";
 
-    for (const t of state.tasks) {
+    for (const t of tasks) {
       const li = document.createElement("li");
       li.className = "task-item" + (t.done ? " done" : "");
       li.dataset.id = t.id;
@@ -609,10 +661,9 @@
     s.textContent = txt;
     return s;
   }
-
   function reminderLabel(t) {
     if (t.done) return "✓ completed";
-    const diff = t.remindAt - Date.now();
+    const diff = (t.remindAt || 0) - Date.now();
     if (t.notified && !t.repeat) return "✦ reminded";
     if (diff <= 0) return "⏰ due now";
     const min = Math.round(diff / 60000);
@@ -622,20 +673,18 @@
     if (hr < 24) return `⏰ in ${hr} hr`;
     return `⏰ in ${Math.round(hr / 24)}d`;
   }
-
   function renderStats() {
-    els.statLevel.textContent = state.level;
-    els.statXp.textContent = state.xp;
-    els.statStreak.textContent = state.streak;
-    const need = xpForLevel(state.level);
-    els.xpFill.style.width = Math.min(100, (state.xp / need) * 100) + "%";
+    els.statLevel.textContent = profile.level;
+    els.statXp.textContent = profile.xp;
+    els.statStreak.textContent = profile.streak;
+    const need = xpForLevel(profile.level);
+    els.xpFill.style.width = Math.min(100, (profile.xp / need) * 100) + "%";
   }
 
-  // keep relative time labels fresh
-  setInterval(() => { if (state.tasks.length) render(); }, 30000);
+  setInterval(() => { if (tasks.length) render(); }, 30000);
 
   /* ============================================================
-     MODAL (type a task)
+     MODAL
      ============================================================ */
   function openModal() {
     els.manualModal.hidden = false;
@@ -647,59 +696,91 @@
   /* ============================================================
      EVENTS
      ============================================================ */
-  els.micBtn.addEventListener("click", startListening);
+  function wireEvents() {
+    els.micBtn.addEventListener("click", startListening);
 
-  els.whenChips.addEventListener("click", (e) => {
-    const chip = e.target.closest(".chip");
-    if (!chip) return;
-    els.whenChips.querySelectorAll(".chip").forEach((c) => c.classList.remove("active"));
-    chip.classList.add("active");
-    selectedDelayMin = parseInt(chip.dataset.min, 10) || 0;
-    sfx.click();
-  });
+    els.whenChips.addEventListener("click", (e) => {
+      const chip = e.target.closest(".chip");
+      if (!chip) return;
+      els.whenChips.querySelectorAll(".chip").forEach((c) => c.classList.remove("active"));
+      chip.classList.add("active");
+      selectedDelayMin = parseInt(chip.dataset.min, 10) || 0;
+      sfx.click();
+    });
 
-  els.repeatToggle.addEventListener("change", () => sfx.click());
+    els.repeatToggle.addEventListener("change", () => sfx.click());
+    els.clearDone.addEventListener("click", clearCompleted);
 
-  els.clearDone.addEventListener("click", clearCompleted);
+    els.soundBtn.addEventListener("click", () => {
+      profile.sound = !profile.sound;
+      els.soundBtn.textContent = profile.sound ? "🔊" : "🔇";
+      saveProfile();
+      if (profile.sound) sfx.click();
+    });
 
-  els.soundBtn.addEventListener("click", () => {
-    state.sound = !state.sound;
-    els.soundBtn.textContent = state.sound ? "🔊" : "🔇";
-    save();
-    if (state.sound) sfx.click();
-  });
+    els.alertsBtn.addEventListener("click", () => { sfx.click(); ensureAlerts(true); });
 
-  els.addManualBtn.addEventListener("click", openModal);
-  els.manualCancel.addEventListener("click", closeModal);
-  els.manualSave.addEventListener("click", () => {
-    const v = els.manualInput.value.trim();
-    if (v) addTask(v);
-    closeModal();
-  });
-  els.manualInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { els.manualSave.click(); }
-    if (e.key === "Escape") closeModal();
-  });
-  els.manualModal.addEventListener("click", (e) => {
-    if (e.target === els.manualModal) closeModal();
-  });
+    els.addManualBtn.addEventListener("click", openModal);
+    els.manualCancel.addEventListener("click", closeModal);
+    els.manualSave.addEventListener("click", () => {
+      const v = els.manualInput.value.trim();
+      if (v) addTask(v);
+      closeModal();
+    });
+    els.manualInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") els.manualSave.click();
+      if (e.key === "Escape") closeModal();
+    });
+    els.manualModal.addEventListener("click", (e) => { if (e.target === els.manualModal) closeModal(); });
 
-  // keyboard: press space (when not typing) to talk
-  document.addEventListener("keydown", (e) => {
-    if (e.code === "Space" && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)
-        && els.manualModal.hidden) {
-      e.preventDefault();
-      startListening();
-    }
-  });
+    document.addEventListener("keydown", (e) => {
+      if (e.code === "Space" && !/INPUT|TEXTAREA/.test(document.activeElement.tagName) && els.manualModal.hidden) {
+        e.preventDefault();
+        startListening();
+      }
+    });
+  }
 
   /* ---------------- helpers ---------------- */
   function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
-  /* ---------------- boot ---------------- */
-  els.soundBtn.textContent = state.sound ? "🔊" : "🔇";
-  render();
-  if (!SR) {
-    say("Tap 🎙️ to talk (or ⌨ type). Tip: voice works best in Chrome.");
+  function setSyncPill() {
+    const live = Store.mode === "firebase";
+    els.syncPill.classList.toggle("live", live);
+    els.syncPill.classList.toggle("local", !live);
+    els.syncText.textContent = live ? "LIVE · shared" : "on-device";
+    els.syncPill.title = live
+      ? "Connected — this list is shared live with everyone who opens the site."
+      : "On-device only. Add your Firebase keys to share the list & get phone push.";
   }
+
+  /* ============================================================
+     BOOT
+     ============================================================ */
+  els.soundBtn.textContent = profile.sound ? "🔊" : "🔇";
+  renderStats();
+  wireEvents();
+  reflectAlerts();
+
+  bootStore().then((s) => {
+    Store = s;
+    setSyncPill();
+    Store.subscribe((list) => { tasks = list; render(); });
+    if (Store.onPush) {
+      Store.onPush((p) => {
+        // foreground push (firebase): surface it in-app too
+        infoToast(p.title || "⏰ Reminder", p.body || "");
+        sfx.remind();
+      });
+    }
+    setInterval(tickReminders, 1000);
+
+    if (Store.mode === "firebase") {
+      say("Connected! 🌐 This list is shared live. Tap 🎙️ and speak a task.");
+    } else if (!SR) {
+      say("Tap 🎙️ to talk (or ⌨ type). Tip: voice works best in Chrome.");
+    }
+    // Re-arm alerts if the user already opted in before.
+    if (profile.pushAsked) ensureAlerts(false);
+  });
 })();
