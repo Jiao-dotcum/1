@@ -25,16 +25,17 @@
 // a private, on-device list — nothing breaks.
 // ------------------------------------------------------------
 
-export const ENABLED = false;
+export const ENABLED = true;
 
 export const firebaseConfig = {
-  apiKey:            "PASTE_API_KEY",
-  authDomain:        "PASTE_PROJECT_ID.firebaseapp.com",
-  projectId:         "PASTE_PROJECT_ID",
-  storageBucket:     "PASTE_PROJECT_ID.appspot.com",
-  messagingSenderId: "PASTE_SENDER_ID",
-  appId:             "PASTE_APP_ID",
+  apiKey:            "AIzaSyAoxG8Y6QAzuS_U_ZHxjwyYi364-tteTSY",
+  authDomain:        "rememmogh.firebaseapp.com",
+  projectId:         "rememmogh",
+  storageBucket:     "rememmogh.firebasestorage.app",
+  messagingSenderId: "258706137750",
+  appId:             "1:258706137750:web:104ef7708013ee693798b7",
+  measurementId:     "G-YZKJ4G9EE1",
 };
 
 // Project settings > Cloud Messaging > Web Push certificates > key pair
-export const vapidKey = "PASTE_WEB_PUSH_CERTIFICATE_KEY_PAIR";
+export const vapidKey = "BCpCEG5AyrMoYPuJyXWRUCC1zkwR27getydDeGvhd7mVkoBoOn5JHVGg__3oxlbiOW9Kl_s-jvlsrMZ3E7amxv4";
