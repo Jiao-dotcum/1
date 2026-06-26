@@ -23,10 +23,11 @@
 // the Edge Function's environment — never put it here.
 // ------------------------------------------------------------
 
-export const ENABLED = false;
+export const ENABLED = true;
 
-export const SUPABASE_URL = "https://PASTE_PROJECT_REF.supabase.co";
-export const SUPABASE_ANON_KEY = "PASTE_ANON_PUBLIC_KEY";
+export const SUPABASE_URL = "https://wdzpnjawcxbiqiasiezp.supabase.co";
+export const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndkenBuamF3Y3hiaXFpYXNpZXpwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0ODY3NjksImV4cCI6MjA5ODA2Mjc2OX0.DHXOLautUYqJNz16GV81J4YoT2_PYFwzFbhmeYX7FLo";
 
 // Public half of the Web Push (VAPID) key pair. Already generated for you.
 // The matching private key is set as an Edge Function secret (see README).
