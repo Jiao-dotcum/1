@@ -1,11 +1,15 @@
-# Firebase / Node
-functions/node_modules/
+# Node / tooling
 node_modules/
-.firebase/
-firebase-debug.log
-firestore-debug.log
-ui-debug.log
 *.log
+
+# Supabase CLI
+supabase/.branches/
+supabase/.temp/
+.env
+.env.*
+
+# Never commit secrets (VAPID private key, service_role key)
+*.secret
 
 # OS / editor
 .DS_Store

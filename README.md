@@ -54,74 +54,95 @@ python3 -m http.server 8000   # then visit http://localhost:8000
 4. When a reminder pops, hit **✓ done** or **+10m** to snooze.
 5. No mic? Click **⌨ type** to add a quest by keyboard.
 
-## 🌐 Shared live list + phone push (optional, recommended)
+## 🌐 Shared live list + phone push (optional, 100% free — no credit card)
 
-Out of the box, Pixel Pal is **on-device only** (the pill in the header reads
-`on-device`). Turn on a small free Firebase backend and it becomes a **shared
+Out of the box, Pixel Pal is **on-device only** (the header pill reads
+`on-device`). Turn on a free **Supabase** backend and it becomes a **shared
 live list** — when anyone speaks *"reservation, 7 PM Friday"*, it pops up on
 **every** open device instantly — plus **real phone push that rings even when
-the site is closed**. The header pill flips to `LIVE · shared`.
+the site is closed**. The pill flips to `LIVE · shared`.
 
-### 1. Create the Firebase project (free)
+Supabase's free tier needs **no credit card**. (Firebase's equivalent forces a
+billing card for its scheduled function — that's why we use Supabase.)
 
-1. Go to <https://console.firebase.google.com> → **Add project**.
-2. Inside it, click the **`</>` (Web)** icon to register a web app. Copy the
-   `firebaseConfig` values it shows you.
-3. **Build → Firestore Database → Create database** (test mode is fine to start;
-   the real rules are in [`firestore.rules`](firestore.rules)).
-4. **Project settings (gear) → Cloud Messaging → Web Push certificates →
-   Generate key pair.** Copy that key string.
+### 1. Create the Supabase project (free)
 
-### 2. Paste your keys in two places
+1. Sign up at <https://supabase.com> → **New project** (pick any name/password).
+2. Open **SQL Editor → New query**, paste the contents of
+   [`supabase/schema.sql`](supabase/schema.sql), and **Run**. This creates the
+   tables, indexes, realtime, and access rules.
+3. **Project Settings → API**: copy the **Project URL** and the **`anon` public**
+   key.
 
-- [`firebase-config.js`](firebase-config.js): fill in `firebaseConfig`, set
-  `vapidKey` to the Web Push key, and set **`ENABLED = true`**.
-- [`firebase-messaging-sw.js`](firebase-messaging-sw.js): paste the **same**
-  `firebaseConfig` (the background push worker needs its own copy).
+### 2. Turn it on in the client (one file)
 
-That's enough for the **shared live list** and for push **while at least one
-device has the app open/installed**.
+In [`supabase-config.js`](supabase-config.js): set `SUPABASE_URL` and
+`SUPABASE_ANON_KEY` to the values from step 1, and set **`ENABLED = true`**.
+(`VAPID_PUBLIC_KEY` is already filled in — that's the public push key.)
+
+That alone gives you the **shared live list** and reminders that ring on any
+device currently running the app.
 
 ### 3. Ring even when *everyone* has it closed
 
-The included Cloud Function does the firing server-side, so phones ring with no
-device awake. Deploy it once:
+A scheduled **Edge Function** sends the push server-side, so phones ring with no
+device awake. Using the Supabase CLI:
 
 ```bash
-npm i -g firebase-tools          # one-time
-firebase login
-firebase use --add               # pick your project
-cd functions && npm install && cd ..
-firebase deploy                  # deploys hosting + rules + the function
+npm i -g supabase                       # one-time
+supabase login
+supabase link --project-ref <PROJECT_REF>
+
+# the Web Push private key (pairs with VAPID_PUBLIC_KEY in supabase-config.js)
+supabase secrets set \
+  VAPID_PUBLIC_KEY="BNPnpzjii_bDl9_bicPrHbd8i4yO-b8P44CJOxCnqvduFNHrCXot4LT6IkUrbLeU8gVSaM2-s0tPneV3lPnq1d0" \
+  VAPID_PRIVATE_KEY="<YOUR_VAPID_PRIVATE_KEY>" \
+  VAPID_SUBJECT="mailto:you@example.com"
+
+supabase functions deploy fire-reminders
 ```
 
-- The scheduled function ([`functions/index.js`](functions/index.js)) needs
-  Firebase's **Blaze** (pay-as-you-go) plan enabled — at personal scale this
-  realistically costs **$0**.
-- `firebase deploy` also hosts the site, giving you an `https://…web.app` URL.
-  **Open that URL on your phone and "Add to Home Screen"** — that installs it as
-  an app so push can ring reliably (iOS requires the home-screen install for web
-  push).
+Then schedule it: open **SQL Editor**, paste
+[`supabase/cron.sql`](supabase/cron.sql), fill in `<PROJECT_REF>` and your
+`service_role` key, and **Run**. It fires every minute.
 
-> ⚠️ You chose **one global list everyone shares**, so the Firestore rules are
-> open: anyone with the URL can see and edit the tasks. To lock it down later,
-> add Firebase Auth or a shared secret and tighten [`firestore.rules`](firestore.rules).
+> The **VAPID private key** is a server secret — it is **not** in this repo. It
+> was generated alongside the public key; set it via `supabase secrets set` as
+> shown. (Regenerate anytime with `npx web-push generate-vapid-keys` and update
+> both the secret and `VAPID_PUBLIC_KEY`.)
 
-If Firebase is off or can't load, the app silently falls back to the private
+### 4. Host the site for free + install on your phone
+
+The front-end is static files, so host them anywhere free. Easiest, since this
+repo is already on GitHub: **GitHub Pages** — repo **Settings → Pages → Build
+from branch**, pick this branch, root. You'll get a `https://<user>.github.io/1/`
+URL. (Cloudflare Pages / Netlify / Vercel work identically.)
+
+On your phone, open that URL → **Add to Home Screen** → launch it from the icon →
+allow notifications. The home-screen install is what makes push ring reliably
+(iOS requires it for web push).
+
+> ⚠️ You chose **one global list everyone shares**, so the rules are open:
+> anyone with the URL can read/edit the tasks. To lock it down later, add
+> Supabase Auth or a shared secret and tighten the policies in
+> [`supabase/schema.sql`](supabase/schema.sql).
+
+If Supabase is off or can't load, the app silently falls back to the private
 on-device list — nothing breaks.
 
 ## 🧩 Tech
 
-Vanilla **HTML / CSS / JavaScript** front-end. Optional **Firebase** backend
-(Firestore + Cloud Messaging + one Cloud Function) for sync and push.
+Vanilla **HTML / CSS / JavaScript** front-end. Optional **Supabase** backend
+(Postgres realtime + one scheduled Edge Function) and **standard Web Push** for
+sync and notifications. No Firebase, no build step.
 
 | Concern              | How |
 |----------------------|-----|
 | Voice input          | Web Speech API (`SpeechRecognition`) |
 | Spoken reminders     | Web Speech API (`SpeechSynthesis`) |
 | In-app notifications | Notification API + custom pixel toasts |
-| Live shared list     | Cloud Firestore realtime listeners |
-| Phone push (closed)  | Firebase Cloud Messaging + scheduled Cloud Function |
+| Live shared list     | Supabase Realtime (Postgres changes) |
+| Phone push (closed)  | Web Push (VAPID) + scheduled Supabase Edge Function |
 | Sound effects        | Web Audio API (procedural chiptune) |
 | Pixel buddy + stars  | `<canvas>` drawn pixel-by-pixel |
 | Per-device progress  | `localStorage` (XP / level / streak) |
@@ -131,16 +152,19 @@ Vanilla **HTML / CSS / JavaScript** front-end. Optional **Firebase** backend
 - `index.html` — markup and layout
 - `styles.css` — the pixel/arcade theme
 - `app.js` — voice, reminders, the buddy, gamification, UI
-- `store.js` — data layer; realtime Firestore sync + push registration
-- `firebase-config.js` — **your keys go here** (off by default)
-- `firebase-messaging-sw.js` — background push service worker
-- `functions/` — Cloud Function that fires reminders when all devices are closed
-- `firebase.json`, `firestore.rules`, `firestore.indexes.json` — deploy config
+- `store.js` — data layer; Supabase realtime sync + Web Push registration
+- `sw.js` — service worker that shows pushed reminders in the background
+- `supabase-config.js` — **your Supabase URL + anon key go here** (off by default)
+- `supabase/schema.sql` — tables, realtime, access policies
+- `supabase/functions/fire-reminders/` — Edge Function that fires reminders
+  when every device is closed
+- `supabase/cron.sql` — schedules that function every minute
 
 ## 📝 Notes
 
 - **On-device mode:** everything stays in your browser; nothing leaves the device.
-- **Shared mode:** the task list lives in your Firestore; your XP/level/streak
-  stay per-device.
-- Phone push that rings while closed needs the Cloud Function deployed (step 3).
-  Without it, reminders still fire on any device that has the app open.
+- **Shared mode:** the task list lives in your Supabase project; your
+  XP/level/streak stay per-device.
+- Phone push that rings while closed needs the Edge Function deployed +
+  scheduled (step 3). Without it, reminders still fire on any device that has
+  the app open.

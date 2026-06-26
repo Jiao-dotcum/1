@@ -10,9 +10,11 @@ done. Gamified (XP / levels / streaks) to be engaging for easily-distracted user
 
 ## Architecture
 
-Vanilla front-end (no build step). An **optional Firebase backend** adds a
+Vanilla front-end (no build step). An **optional Supabase backend** adds a
 shared realtime task list and phone push; when it's off the app runs fully
-on-device. The app degrades gracefully if Firebase isn't configured or fails.
+on-device. The app degrades gracefully if Supabase isn't configured or fails.
+Supabase is used (not Firebase) specifically because its free tier needs no
+credit card, including the scheduled function.
 
 ### Front-end
 
@@ -28,39 +30,51 @@ on-device. The app degrades gracefully if Firebase isn't configured or fails.
   - **Speech recognition** via `webkitSpeechRecognition`; `parseWhen` parses
     "in 10 minutes", "tomorrow", etc.
   - **Reminders** (1s `setInterval`): in **local** mode this client fires AND
-    advances task state; in **firebase** mode the Cloud Function is authoritative
+    advances task state; in **supabase** mode the Edge Function is authoritative
     for firing (so phones ring when closed) and the client only shows an in-app
     reminder once per `(id, remindAt)`. "Nag" re-arms every 5 min.
   - **Pixel buddy**: 16×16 sprite on `<canvas>` (idle/listen/happy/think) +
     starfield canvas.
   - **Gamification** is per-device: XP/level/streak in `localStorage` under
     `pixelpal.profile.v1`. Tasks (shared) are `pixelpal.tasks.v1` in local mode.
+  - Mode checks use `Store.mode === "local"` vs everything else — don't hardcode
+    the backend name in app.js.
 
 ### Backend (optional, off by default)
 
-- `firebase-config.js` — user pastes keys; `ENABLED` flag gates everything.
-- `store.js` — ES module. Lazy-imports Firebase from the gstatic CDN, does
-  Firestore `onSnapshot` realtime sync of the `tasks` collection, and registers
-  FCM tokens into `pushTokens`. Exposes `window.PixelStore`.
-- `firebase-messaging-sw.js` — background push service worker (needs its own
-  copy of `firebaseConfig` pasted in).
-- `functions/index.js` — scheduled Cloud Function (`every 1 minutes`) that pushes
-  due reminders to all `pushTokens` and advances task state. Requires Blaze plan.
-- `firebase.json`, `firestore.rules` (open — global shared list), `firestore.indexes.json`.
+- `supabase-config.js` — user pastes `SUPABASE_URL` + `SUPABASE_ANON_KEY`;
+  `ENABLED` flag gates everything. `VAPID_PUBLIC_KEY` is the public Web Push key
+  (committed; safe). The VAPID *private* key is NEVER committed — it's a Supabase
+  Edge Function secret.
+- `store.js` — ES module (`mode: "supabase"`). Lazy-imports `@supabase/supabase-js`
+  from esm.sh, does realtime sync via `postgres_changes` on the `tasks` table
+  (re-fetches on change), and subscribes to standard Web Push (`pushManager`),
+  saving the subscription to `push_subscriptions`. Exposes `window.PixelStore`.
+  DB columns are snake_case (`remind_at`); `fromRow`/`toRow` map to camelCase.
+- `sw.js` — standard service worker: shows the OS notification on `push`,
+  relays to open tabs via `postMessage` ({type:"pixelpal-push"}).
+- `supabase/schema.sql` — `tasks` + `push_subscriptions` tables, realtime
+  publication, open RLS policies (global shared list).
+- `supabase/functions/fire-reminders/index.ts` — Deno Edge Function; every
+  minute pushes due reminders to all `push_subscriptions` (via `npm:web-push`)
+  and advances task state. Reads VAPID_* secrets.
+- `supabase/cron.sql` — `pg_cron` + `pg_net` job invoking the Edge Function
+  every minute (user fills project ref + service_role key).
 
 ## Commands
 
 - No front-end build/lint/test. To run: open `index.html`, or serve with
   `python3 -m http.server 8000` and visit `http://localhost:8000`.
-- Syntax-check JS: `node --check app.js` (also `store.js`, `functions/index.js`).
-- Deploy backend: `firebase deploy` (after `cd functions && npm install`).
+- Syntax-check JS: `node --check app.js` (also `store.js`, `sw.js`).
+- Deploy backend: run `supabase/schema.sql` in the SQL editor;
+  `supabase functions deploy fire-reminders`; then run `supabase/cron.sql`.
 
 ## Guidance
 
-- Keep the app runnable with zero setup — Firebase must stay optional and the
+- Keep the app runnable with zero setup — Supabase must stay optional and the
   local fallback must never break.
 - Tasks are shared; XP/level/streak are intentionally per-device.
-- If you change `firebaseConfig` keys, they must be updated in BOTH
-  `firebase-config.js` and `firebase-messaging-sw.js`.
-- Microphone/Notification/Service Worker APIs need a user gesture and an
+- NEVER commit the VAPID private key or the service_role key. Public VAPID key,
+  Supabase URL, and anon key are safe to ship in client code.
+- Microphone/Notification/Service Worker/Push APIs need a user gesture and an
   http(s) origin (service workers don't run on `file://`).

@@ -1,28 +1,26 @@
 // ============================================================
-// store.js — the data layer.
+// store.js — the data layer (Supabase edition).
 //
-// If firebase-config.js has ENABLED = true and Firebase loads, this turns
-// the task list into a SHARED, realtime list: every open device sees the
-// same tasks instantly, and we register the device for push so the Cloud
-// Function can ring phones even when the site is closed.
+// If supabase-config.js has ENABLED = true and Supabase loads, the task
+// list becomes a SHARED, realtime list: every open device sees the same
+// tasks instantly, and the browser subscribes to Web Push so the scheduled
+// Edge Function can ring phones even when the site is closed.
 //
-// It publishes a `window.PixelStore` object and fires a `pixelstore-ready`
-// event. If Firebase is off or fails, it sets `window.__pixelStoreLocal`
-// so app.js falls back to its built-in on-device store. The app never
-// breaks — it just loses the "shared" superpower.
+// It publishes `window.PixelStore` and fires a `pixelstore-ready` event.
+// If Supabase is off or fails, it sets `window.__pixelStoreLocal` so app.js
+// falls back to its built-in on-device store. The app never breaks.
 //
-// Loaded as a <script type="module"> so it can use ES module imports.
+// Loaded as <script type="module"> so it can use ES module imports.
 // ============================================================
 
-import { ENABLED, firebaseConfig, vapidKey } from "./firebase-config.js";
+import { ENABLED, SUPABASE_URL, SUPABASE_ANON_KEY, VAPID_PUBLIC_KEY } from "./supabase-config.js";
 
-const SDK = "https://www.gstatic.com/firebasejs/10.12.2";
+const SDK = "https://esm.sh/@supabase/supabase-js@2";
 
-if (ENABLED && !looksLikePlaceholder(firebaseConfig)) {
-  // Tell app.js to wait a bit longer for the network before giving up.
-  window.__pixelStorePending = true;
+if (ENABLED && !looksLikePlaceholder()) {
+  window.__pixelStorePending = true; // tell app.js to wait for the network
   init().catch((err) => {
-    console.warn("[PixelPal] Firebase unavailable, using on-device mode:", err);
+    console.warn("[PixelPal] Supabase unavailable, using on-device mode:", err);
     goLocal();
   });
 } else {
@@ -34,111 +32,131 @@ function goLocal() {
   window.dispatchEvent(new Event("pixelstore-local"));
 }
 
-function looksLikePlaceholder(cfg) {
-  return !cfg || !cfg.projectId || String(cfg.projectId).startsWith("PASTE");
+function looksLikePlaceholder() {
+  return (
+    !SUPABASE_URL ||
+    SUPABASE_URL.includes("PASTE") ||
+    !SUPABASE_ANON_KEY ||
+    SUPABASE_ANON_KEY.includes("PASTE")
+  );
+}
+
+// DB columns are snake_case; the app uses camelCase. Map both ways.
+function fromRow(r) {
+  return {
+    id: r.id,
+    text: r.text,
+    created: Number(r.created),
+    remindAt: Number(r.remind_at),
+    repeat: !!r.repeat,
+    done: !!r.done,
+    notified: !!r.notified,
+  };
+}
+function toRow(t) {
+  const row = {};
+  if ("id" in t) row.id = t.id;
+  if ("text" in t) row.text = t.text;
+  if ("created" in t) row.created = t.created;
+  if ("remindAt" in t) row.remind_at = t.remindAt;
+  if ("repeat" in t) row.repeat = t.repeat;
+  if ("done" in t) row.done = t.done;
+  if ("notified" in t) row.notified = t.notified;
+  return row;
 }
 
 async function init() {
-  const [{ initializeApp }, fs] = await Promise.all([
-    import(`${SDK}/firebase-app.js`),
-    import(`${SDK}/firebase-firestore.js`),
-  ]);
-
-  // Messaging is optional (some browsers / contexts don't support it).
-  let msg = null;
-  try { msg = await import(`${SDK}/firebase-messaging.js`); } catch (_) {}
-
-  const app = initializeApp(firebaseConfig);
-  const db = fs.getFirestore(app);
-  const tasksCol = fs.collection(db, "tasks");
-  const tasksQuery = fs.query(tasksCol, fs.orderBy("created", "desc"));
+  const { createClient } = await import(SDK);
+  const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    realtime: { params: { eventsPerSecond: 5 } },
+  });
 
   let tasks = [];
   const taskListeners = [];
   const pushListeners = [];
 
-  // ---- realtime sync: every change anywhere lands here ----
-  fs.onSnapshot(
-    tasksQuery,
-    (snap) => {
-      tasks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      taskListeners.forEach((cb) => cb(tasks.slice()));
-    },
-    (err) => console.warn("[PixelPal] snapshot error:", err)
-  );
+  async function refetch() {
+    const { data, error } = await sb
+      .from("tasks")
+      .select("*")
+      .order("created", { ascending: false });
+    if (error) { console.warn("[PixelPal] fetch error:", error); return; }
+    tasks = (data || []).map(fromRow);
+    taskListeners.forEach((cb) => cb(tasks.slice()));
+  }
 
-  let messaging = null;
-  function getMsg() {
-    if (!messaging && msg) {
-      try { messaging = msg.getMessaging(app); } catch (_) { messaging = null; }
-    }
-    return messaging;
+  // Initial load, then live updates on every insert/update/delete.
+  await refetch();
+  sb.channel("tasks-realtime")
+    .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, refetch)
+    .subscribe();
+
+  // Relay messages the service worker sends when a push arrives in the
+  // foreground, so open tabs can react in-app too.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", (ev) => {
+      const d = ev.data || {};
+      if (d.type === "pixelpal-push") {
+        pushListeners.forEach((cb) => cb({ title: d.title, body: d.body, data: d.data }));
+      }
+    });
   }
 
   const store = {
-    mode: "firebase",
+    mode: "supabase",
 
-    subscribe(cb) {
-      taskListeners.push(cb);
-      cb(tasks.slice()); // fire immediately with whatever we have
-    },
-
+    subscribe(cb) { taskListeners.push(cb); cb(tasks.slice()); },
     onPush(cb) { pushListeners.push(cb); },
 
     async add(task) {
-      const { id, ...data } = task;
-      await fs.setDoc(fs.doc(db, "tasks", id), data);
+      const { error } = await sb.from("tasks").insert(toRow(task));
+      if (error) console.warn("[PixelPal] add failed:", error);
     },
-
     async update(id, patch) {
-      try { await fs.updateDoc(fs.doc(db, "tasks", id), patch); }
-      catch (e) { console.warn("[PixelPal] update failed:", e); }
+      const { error } = await sb.from("tasks").update(toRow(patch)).eq("id", id);
+      if (error) console.warn("[PixelPal] update failed:", error);
     },
-
     async remove(id) {
-      await fs.deleteDoc(fs.doc(db, "tasks", id));
+      await sb.from("tasks").delete().eq("id", id);
     },
-
     async clearDone() {
-      const done = tasks.filter((t) => t.done);
-      await Promise.all(done.map((t) => fs.deleteDoc(fs.doc(db, "tasks", t.id))));
+      await sb.from("tasks").delete().eq("done", true);
     },
 
-    // Request notification permission and register this device for push.
-    // Returns "push" (full phone push), "local" (in-app notifications
-    // only), or "denied".
+    // Ask for permission, subscribe to Web Push, and save the subscription
+    // so the Edge Function can deliver reminders. Returns "push" | "local"
+    // | "denied".
     async enablePush() {
       if (!("Notification" in window)) return "denied";
       let perm = Notification.permission;
       if (perm === "default") perm = await Notification.requestPermission();
       if (perm !== "granted") return "denied";
 
-      const m = getMsg();
-      const haveVapid = vapidKey && !vapidKey.startsWith("PASTE");
-      if (!m || !haveVapid || !("serviceWorker" in navigator)) return "local";
+      const canPush =
+        "serviceWorker" in navigator &&
+        "PushManager" in window &&
+        VAPID_PUBLIC_KEY &&
+        !VAPID_PUBLIC_KEY.includes("PASTE");
+      if (!canPush) return "local";
 
       try {
-        const reg = await navigator.serviceWorker.register("./firebase-messaging-sw.js");
-        const token = await msg.getToken(m, {
-          vapidKey,
-          serviceWorkerRegistration: reg,
-        });
-        if (token) {
-          await fs.setDoc(fs.doc(db, "pushTokens", token), {
-            created: Date.now(),
-            ua: navigator.userAgent,
+        const reg = await navigator.serviceWorker.register("./sw.js");
+        await navigator.serviceWorker.ready;
+        let sub = await reg.pushManager.getSubscription();
+        if (!sub) {
+          sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
           });
         }
-        // Foreground messages don't auto-show; hand them to the app.
-        msg.onMessage(m, (payload) => {
-          const n = (payload && payload.notification) || {};
-          pushListeners.forEach((cb) =>
-            cb({ title: n.title, body: n.body, data: payload && payload.data })
-          );
-        });
+        const json = sub.toJSON();
+        await sb.from("push_subscriptions").upsert(
+          { endpoint: json.endpoint, subscription: json, created: Date.now() },
+          { onConflict: "endpoint" }
+        );
         return "push";
       } catch (e) {
-        console.warn("[PixelPal] push registration failed:", e);
+        console.warn("[PixelPal] push subscribe failed:", e);
         return "local";
       }
     },
@@ -146,4 +164,14 @@ async function init() {
 
   window.PixelStore = store;
   window.dispatchEvent(new Event("pixelstore-ready"));
+}
+
+// VAPID public key (base64url) -> Uint8Array for applicationServerKey.
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
 }

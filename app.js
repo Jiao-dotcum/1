@@ -3,13 +3,13 @@
    Voice capture, reminders, gamification, the pixel buddy.
 
    Data lives behind a "Store":
-     - SHARED mode (Firebase): tasks sync live across every device, and
-       a Cloud Function pushes reminders to phones even when closed.
-     - LOCAL mode (no Firebase): tasks live in localStorage on this device.
+     - SHARED mode (Supabase): tasks sync live across every device, and a
+       scheduled Edge Function pushes reminders to phones even when closed.
+     - LOCAL mode (no backend): tasks live in localStorage on this device.
    Either way the UI is identical. Your XP / level / streak is always
    per-device (in localStorage) — only the task list is shared.
 
-   No external libraries in this file. store.js handles Firebase.
+   No external libraries in this file. store.js handles Supabase.
    ============================================================ */
 (() => {
   "use strict";
@@ -74,7 +74,7 @@
   })();
 
   /* ---------------- pick which store to use ---------------- */
-  let Store = LocalStore;          // replaced by Firebase store if available
+  let Store = LocalStore;          // replaced by the Supabase store if available
   let tasks = [];                  // mirror of the current task list
 
   function bootStore() {
@@ -89,7 +89,7 @@
       if (decide()) return;
       window.addEventListener("pixelstore-ready", decide, { once: true });
       window.addEventListener("pixelstore-local", decide, { once: true });
-      // If Firebase is mid-load, wait longer; otherwise fall back quickly.
+      // If Supabase is mid-load, wait longer; otherwise fall back quickly.
       const wait = window.__pixelStorePending ? 9000 : 2000;
       setTimeout(() => { if (!settled) { settled = true; resolve(LocalStore); } }, wait);
     });
@@ -353,7 +353,7 @@
     sfx.add();
     buddy.setMood("happy", 1500);
     const whenTxt = delay ? "I'll remind you " + humanDelay(delay) : "got it, on the list!";
-    const shared = Store.mode === "firebase" ? " (everyone sees it)" : "";
+    const shared = Store.mode !== "local" ? " (everyone sees it)" : "";
     say('"' + truncate(task.text, 36) + '" — ' + whenTxt + shared);
     ensureAlerts();
     await Store.add(task);
@@ -426,11 +426,11 @@
   /* ============================================================
      REMINDER SCHEDULER
        - local mode: this client fires AND advances task state.
-       - firebase mode: the Cloud Function is authoritative for firing
+       - shared mode (Supabase): the Edge Function is authoritative for firing
          (so phones ring when closed). This client only shows an in-app
          reminder for tasks that are due, once each, so open tabs react.
      ============================================================ */
-  const shownLocally = new Set(); // `${id}@${remindAt}` keys, firebase mode
+  const shownLocally = new Set(); // `${id}@${remindAt}` keys, shared mode
 
   function presentReminder(task) {
     sfx.remind();
@@ -462,7 +462,7 @@
         }
       }
     } else {
-      // firebase: present once per (id, remindAt); function owns state.
+      // shared: present once per (id, remindAt); the Edge Function owns state.
       for (const t of tasks) {
         if (t.done) continue;
         if ((t.remindAt || 0) <= now && !t.notified) {
@@ -745,13 +745,13 @@
   function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
   function setSyncPill() {
-    const live = Store.mode === "firebase";
+    const live = Store.mode !== "local";
     els.syncPill.classList.toggle("live", live);
     els.syncPill.classList.toggle("local", !live);
     els.syncText.textContent = live ? "LIVE · shared" : "on-device";
     els.syncPill.title = live
       ? "Connected — this list is shared live with everyone who opens the site."
-      : "On-device only. Add your Firebase keys to share the list & get phone push.";
+      : "On-device only. Add your Supabase keys to share the list & get phone push.";
   }
 
   /* ============================================================
@@ -768,14 +768,14 @@
     Store.subscribe((list) => { tasks = list; render(); });
     if (Store.onPush) {
       Store.onPush((p) => {
-        // foreground push (firebase): surface it in-app too
+        // foreground push (shared): surface it in-app too
         infoToast(p.title || "⏰ Reminder", p.body || "");
         sfx.remind();
       });
     }
     setInterval(tickReminders, 1000);
 
-    if (Store.mode === "firebase") {
+    if (Store.mode !== "local") {
       say("Connected! 🌐 This list is shared live. Tap 🎙️ and speak a task.");
     } else if (!SR) {
       say("Tap 🎙️ to talk (or ⌨ type). Tip: voice works best in Chrome.");
