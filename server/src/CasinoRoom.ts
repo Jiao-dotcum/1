@@ -96,7 +96,11 @@ export class CasinoRoom extends Room<CasinoState> {
   }
 
   onLeave(client: Client): void {
-    // If seated, stand them so their chips return to balance and seat frees up.
+    // TODO(phase4): reconnection. Wrap in `await this.allowReconnection(client, 30)`
+    // for consented disconnects — hold the seat + chips, restore on reconnect keyed
+    // by a durable account id (see persistence.ts) instead of dropping immediately.
+    //
+    // If seated, stand them so their chips return to balance and the seat frees up.
     const player = this.state.players.get(client.sessionId);
     if (player && player.seatedTable) {
       this.doStand(client.sessionId);

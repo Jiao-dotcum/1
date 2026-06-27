@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PokerPandey 🐼</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene"></canvas>
+
+      <!-- Join overlay -->
+      <div id="join" class="overlay">
+        <div class="panel">
+          <h1>🐼 PokerPandey</h1>
+          <p class="tagline">Roam the casino. Hear the tables. Take a seat.</p>
+          <label>Name <input id="name-input" maxlength="24" placeholder="Panda" /></label>
+          <button id="join-btn">Enter the casino</button>
+          <p class="hint">Move with <b>WASD</b> / arrows · <b>E</b> to sit / stand</p>
+        </div>
+      </div>
+
+      <!-- HUD -->
+      <div id="hud" class="hidden">
+        <div id="notices"></div>
+        <div id="controls-hint">WASD move · E sit/stand · walk toward a table to hear it</div>
+      </div>
+
+      <!-- Poker UI (shown when seated) -->
+      <div id="poker" class="hidden"></div>
+
+      <!-- Moderation panel -->
+      <div id="mod" class="hidden">
+        <button id="mod-toggle" title="Moderation">🛡️</button>
+        <div id="mod-panel" class="hidden">
+          <h3>Moderation</h3>
+          <div id="player-list"></div>
+          <label class="killswitch">
+            <input type="checkbox" id="kill-switch" /> Voice kill switch (silence all mics)
+          </label>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
