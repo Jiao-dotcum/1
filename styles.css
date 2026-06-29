@@ -101,6 +101,14 @@ h1, h2, h3, .pixel-font,
 
 .mini-btn.armed { background: var(--good); color: #04231d; border-color: #04231d; }
 
+/* install-app button: pulses gently to invite the tap */
+.install-btn {
+  background: var(--gold); color: #2a2102; border-color: #2a2102;
+  animation: installPulse 1.6s steps(2) infinite;
+}
+.install-btn[hidden] { display: none; }
+@keyframes installPulse { 50% { filter: brightness(1.25); } }
+
 .stats { display: flex; gap: 14px; align-items: center; }
 .stat {
   display: flex; align-items: center; gap: 8px;

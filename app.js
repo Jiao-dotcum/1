@@ -115,6 +115,7 @@
     toastStack: $("toastStack"),
     soundBtn: $("soundBtn"),
     alertsBtn: $("alertsBtn"),
+    installBtn: $("installBtn"),
     addManualBtn: $("addManualBtn"),
     manualModal: $("manualModal"),
     manualInput: $("manualInput"),
@@ -741,6 +742,56 @@
     });
   }
 
+  /* ============================================================
+     PWA — install prompt + service worker (offline / installable)
+     ============================================================ */
+  let deferredInstall = null;
+
+  function initPWA() {
+    // Register the service worker early so the app is installable and works
+    // offline. Needs https or localhost (won't run on file://).
+    const securish =
+      location.protocol === "https:" ||
+      ["localhost", "127.0.0.1"].includes(location.hostname);
+    if ("serviceWorker" in navigator && securish) {
+      navigator.serviceWorker.register("./sw.js").catch(() => {});
+    }
+
+    // Chromium fires this when the app is installable; stash it for our button.
+    window.addEventListener("beforeinstallprompt", (e) => {
+      e.preventDefault();
+      deferredInstall = e;
+      if (els.installBtn) els.installBtn.hidden = false;
+    });
+
+    if (els.installBtn) {
+      els.installBtn.addEventListener("click", async () => {
+        sfx.click();
+        if (!deferredInstall) {
+          // iOS Safari has no prompt API — guide the user instead.
+          say("To install: tap Share ⬆ then 'Add to Home Screen' 📲");
+          return;
+        }
+        deferredInstall.prompt();
+        try { await deferredInstall.userChoice; } catch (_) {}
+        deferredInstall = null;
+        els.installBtn.hidden = true;
+      });
+    }
+
+    window.addEventListener("appinstalled", () => {
+      deferredInstall = null;
+      if (els.installBtn) els.installBtn.hidden = true;
+      say("Installed! 🎉 Launch Pixel Pal from your home screen.");
+    });
+
+    // Already running as an installed app? No need for the button.
+    const standalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      window.navigator.standalone === true;
+    if (standalone && els.installBtn) els.installBtn.hidden = true;
+  }
+
   /* ---------------- helpers ---------------- */
   function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
@@ -761,6 +812,7 @@
   renderStats();
   wireEvents();
   reflectAlerts();
+  initPWA();
 
   bootStore().then((s) => {
     Store = s;

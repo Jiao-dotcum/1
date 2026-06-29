@@ -147,13 +147,28 @@ sync and notifications. No Firebase, no build step.
 | Pixel buddy + stars  | `<canvas>` drawn pixel-by-pixel |
 | Per-device progress  | `localStorage` (XP / level / streak) |
 
+## 📲 Install it as an app
+
+Pixel Pal is a **PWA**, so it installs like a native app — its own icon, a
+full-screen launch with no browser bars, and offline support.
+
+- **Android / Chrome / Edge:** tap the **⬇ install** button in the app (or the
+  browser's "Install app" menu item).
+- **iPhone / Safari:** tap **Share → Add to Home Screen**. (iOS requires this
+  home-screen install before web push notifications can ring.)
+
+Installing requires the site to be served over **https** (e.g. GitHub Pages),
+not opened as a local file.
+
 ### Files
 
 - `index.html` — markup and layout
 - `styles.css` — the pixel/arcade theme
-- `app.js` — voice, reminders, the buddy, gamification, UI
+- `app.js` — voice, reminders, the buddy, gamification, UI, install prompt
 - `store.js` — data layer; Supabase realtime sync + Web Push registration
-- `sw.js` — service worker that shows pushed reminders in the background
+- `sw.js` — service worker: app-shell cache (offline/installable) + push display
+- `manifest.webmanifest` + `icons/` — PWA manifest and app icons
+- `scripts/gen-icons.js` — regenerates the pixel-art icons from the buddy sprite
 - `supabase-config.js` — **your Supabase URL + anon key go here** (off by default)
 - `supabase/schema.sql` — tables, realtime, access policies
 - `supabase/functions/fire-reminders/` — Edge Function that fires reminders
