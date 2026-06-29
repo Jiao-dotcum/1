@@ -57,7 +57,9 @@ Deno.serve(async () => {
       data: { id: task.id },
     });
 
-    for (const s of subscriptions) {
+    // only ring devices that belong to this task's room
+    const targets = subscriptions.filter((s) => (s.room ?? "global") === (task.room ?? "global"));
+    for (const s of targets) {
       try {
         await webpush.sendNotification(s.subscription, payload);
         sent++;

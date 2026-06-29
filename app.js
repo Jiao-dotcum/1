@@ -57,6 +57,8 @@
       mode: "local",
       subscribe(cb) { subs.push(cb); cb(tasks.slice()); },
       onPush() {},
+      getRoom() { return null; },          // no sharing on-device
+      async setRoom() { return null; },
       async add(task) { tasks.unshift(task); persist(); emit(); },
       async update(id, patch) {
         const t = tasks.find((x) => x.id === id);
@@ -127,6 +129,16 @@
     stars: $("stars"),
     syncPill: $("syncPill"),
     syncText: $("syncText"),
+    roomPill: $("roomPill"),
+    roomName: $("roomName"),
+    roomModal: $("roomModal"),
+    roomCodeBig: $("roomCodeBig"),
+    roomCopy: $("roomCopy"),
+    roomShare: $("roomShare"),
+    roomInput: $("roomInput"),
+    roomNew: $("roomNew"),
+    roomCancel: $("roomCancel"),
+    roomJoin: $("roomJoin"),
   };
 
   let selectedDelayMin = 0;
@@ -354,7 +366,7 @@
     sfx.add();
     buddy.setMood("happy", 1500);
     const whenTxt = delay ? "I'll remind you " + humanDelay(delay) : "got it, on the list!";
-    const shared = Store.mode !== "local" ? " (everyone sees it)" : "";
+    const shared = Store.mode !== "local" ? " (everyone in your room)" : "";
     say('"' + truncate(task.text, 36) + '" — ' + whenTxt + shared);
     ensureAlerts();
     await Store.add(task);
@@ -801,8 +813,72 @@
     els.syncPill.classList.toggle("local", !live);
     els.syncText.textContent = live ? "LIVE · shared" : "on-device";
     els.syncPill.title = live
-      ? "Connected — this list is shared live with everyone who opens the site."
+      ? "Connected — this list is shared live with everyone in your room."
       : "On-device only. Add your Supabase keys to share the list & get phone push.";
+  }
+
+  /* ============================================================
+     ROOMS — a shared code; same code = same private list
+     ============================================================ */
+  function roomLink(code) {
+    return location.origin + location.pathname + "?room=" + encodeURIComponent(code);
+  }
+  function updateRoomUI() {
+    const code = Store.getRoom && Store.getRoom();
+    const sharing = Store.mode !== "local" && !!code;
+    els.roomPill.hidden = !sharing;
+    if (sharing) els.roomName.textContent = code;
+  }
+  function openRoomModal() {
+    const code = Store.getRoom();
+    els.roomCodeBig.textContent = code;
+    els.roomInput.value = "";
+    els.roomModal.hidden = false;
+    setTimeout(() => els.roomInput.focus(), 30);
+  }
+  function closeRoomModal() { els.roomModal.hidden = true; }
+
+  async function copyText(text, okMsg) {
+    try {
+      if (navigator.clipboard) await navigator.clipboard.writeText(text);
+      else {
+        const ta = document.createElement("textarea");
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        document.execCommand("copy"); ta.remove();
+      }
+      sfx.add(); say(okMsg);
+    } catch (_) { say("Couldn't copy — here it is: " + text); }
+  }
+
+  async function switchRoom(code) {
+    const next = await Store.setRoom(code); // falsy code -> brand new room
+    shownLocally.clear();
+    updateRoomUI();
+    setSyncPill();
+    closeRoomModal();
+    sfx.done();
+    say("You're in room “" + next + "” 👥");
+  }
+
+  function wireRoom() {
+    els.roomPill.addEventListener("click", () => { sfx.click(); openRoomModal(); });
+    els.roomCancel.addEventListener("click", closeRoomModal);
+    els.roomModal.addEventListener("click", (e) => { if (e.target === els.roomModal) closeRoomModal(); });
+    els.roomCopy.addEventListener("click", () => copyText(Store.getRoom(), "Code copied! 📋"));
+    els.roomShare.addEventListener("click", () => copyText(roomLink(Store.getRoom()), "Invite link copied! 🔗"));
+    els.roomJoin.addEventListener("click", () => {
+      const v = els.roomInput.value.trim();
+      if (v) switchRoom(v);
+    });
+    els.roomInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") els.roomJoin.click();
+      if (e.key === "Escape") closeRoomModal();
+    });
+    els.roomNew.addEventListener("click", () => {
+      if (confirm("Start a fresh, empty room? Your current room keeps its tasks — you can rejoin it with its code.")) {
+        switchRoom(""); // empty -> store generates a new code
+      }
+    });
   }
 
   /* ============================================================
@@ -817,6 +893,8 @@
   bootStore().then((s) => {
     Store = s;
     setSyncPill();
+    wireRoom();
+    updateRoomUI();
     Store.subscribe((list) => { tasks = list; render(); });
     if (Store.onPush) {
       Store.onPush((p) => {
@@ -828,7 +906,7 @@
     setInterval(tickReminders, 1000);
 
     if (Store.mode !== "local") {
-      say("Connected! 🌐 This list is shared live. Tap 🎙️ and speak a task.");
+      say("Connected! 👥 Room “" + Store.getRoom() + "”. Tap it up top to share. Now speak a task 🎙️");
     } else if (!SR) {
       say("Tap 🎙️ to talk (or ⌨ type). Tip: voice works best in Chrome.");
     }

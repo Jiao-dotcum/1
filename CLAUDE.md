@@ -51,6 +51,9 @@ credit card, including the scheduled function.
   (re-fetches on change), and subscribes to standard Web Push (`pushManager`),
   saving the subscription to `push_subscriptions`. Exposes `window.PixelStore`.
   DB columns are snake_case (`remind_at`); `fromRow`/`toRow` map to camelCase.
+  Lists are scoped by a **room code** (localStorage `pixelpal.room.v1`, or
+  `?room=`/`#room=` in the URL); queries/realtime/push all filter by `room`.
+  `getRoom()`/`setRoom(code)` switch rooms (empty code = generate a new one).
 - `sw.js` — standard service worker: shows the OS notification on `push`,
   relays to open tabs via `postMessage` ({type:"pixelpal-push"}).
 - `supabase/schema.sql` — `tasks` + `push_subscriptions` tables, realtime

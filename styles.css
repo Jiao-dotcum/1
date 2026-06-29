@@ -101,6 +101,37 @@ h1, h2, h3, .pixel-font,
 
 .mini-btn.armed { background: var(--good); color: #04231d; border-color: #04231d; }
 
+/* room pill */
+.room-pill {
+  display: inline-flex; align-items: center;
+  font-family: "Press Start 2P"; font-size: 7px;
+  padding: 5px 8px; cursor: pointer;
+  background: var(--accent-3); color: #2a0416;
+  border: 2px solid #2a0416; box-shadow: 0 3px 0 #000;
+}
+.room-pill:active { transform: translateY(3px); box-shadow: none; }
+.room-pill[hidden] { display: none; }
+
+/* room modal bits */
+.room-help { font-size: 17px; color: var(--ink-dim); line-height: 1.25; margin: 0 0 14px; }
+.room-code-box {
+  display: flex; align-items: center; gap: 10px;
+  background: #0c0a22; border: 3px solid var(--accent-3);
+  padding: 10px 12px; margin-bottom: 10px;
+}
+#roomCodeBig {
+  flex: 1; font-family: "Press Start 2P"; font-size: 12px;
+  color: var(--accent-3); word-break: break-all; letter-spacing: 1px;
+}
+.room-share { width: 100%; }
+.room-divider {
+  display: flex; align-items: center; text-align: center;
+  color: var(--ink-dim); font-size: 16px; margin: 16px 0 10px;
+}
+.room-divider::before, .room-divider::after {
+  content: ""; flex: 1; height: 3px; background: var(--panel-edge); margin: 0 8px;
+}
+
 /* install-app button: pulses gently to invite the tap */
 .install-btn {
   background: var(--gold); color: #2a2102; border-color: #2a2102;

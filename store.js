@@ -1,10 +1,10 @@
 // ============================================================
-// store.js — the data layer (Supabase edition).
+// store.js — the data layer (Supabase edition, room-scoped).
 //
 // If supabase-config.js has ENABLED = true and Supabase loads, the task
-// list becomes a SHARED, realtime list: every open device sees the same
-// tasks instantly, and the browser subscribes to Web Push so the scheduled
-// Edge Function can ring phones even when the site is closed.
+// list becomes a SHARED, realtime list scoped to a ROOM CODE: everyone who
+// uses the same code sees the same tasks instantly, and their phones get the
+// push for that room's reminders. Different codes = separate private lists.
 //
 // It publishes `window.PixelStore` and fires a `pixelstore-ready` event.
 // If Supabase is off or fails, it sets `window.__pixelStoreLocal` so app.js
@@ -16,6 +16,7 @@
 import { ENABLED, SUPABASE_URL, SUPABASE_ANON_KEY, VAPID_PUBLIC_KEY } from "./supabase-config.js";
 
 const SDK = "https://esm.sh/@supabase/supabase-js@2";
+const ROOM_KEY = "pixelpal.room.v1";
 
 if (ENABLED && !looksLikePlaceholder()) {
   window.__pixelStorePending = true; // tell app.js to wait for the network
@@ -41,6 +42,37 @@ function looksLikePlaceholder() {
   );
 }
 
+/* ---------- room codes: memorable + voice-friendly ---------- */
+const ADJ = ["tiger", "comet", "pixel", "neon", "turbo", "lunar", "cosmic", "retro",
+  "mega", "hyper", "ghost", "laser", "atom", "solar", "frost", "ember"];
+const NOUN = ["comet", "robot", "dragon", "rocket", "ninja", "wizard", "falcon", "yeti",
+  "panda", "phoenix", "otter", "koala", "raven", "gizmo", "bolt", "moon"];
+function genRoom() {
+  const a = ADJ[(Math.random() * ADJ.length) | 0];
+  const n = NOUN[(Math.random() * NOUN.length) | 0];
+  const num = String((Math.random() * 900 + 100) | 0); // 3 digits
+  return `${a}-${n}-${num}`;
+}
+function normalizeRoom(c) {
+  const cleaned = String(c || "").toLowerCase().trim().replace(/[^a-z0-9-]/g, "").slice(0, 40);
+  return cleaned || genRoom();
+}
+function resolveRoom() {
+  // A shared link can carry the code: ?room=code  or  #room=code
+  const url = new URL(location.href);
+  const fromUrl =
+    url.searchParams.get("room") ||
+    (location.hash.match(/room=([a-z0-9-]+)/i) || [])[1];
+  if (fromUrl) {
+    const r = normalizeRoom(fromUrl);
+    localStorage.setItem(ROOM_KEY, r);
+    return r;
+  }
+  let r = localStorage.getItem(ROOM_KEY);
+  if (!r) { r = genRoom(); localStorage.setItem(ROOM_KEY, r); }
+  return r;
+}
+
 // DB columns are snake_case; the app uses camelCase. Map both ways.
 function fromRow(r) {
   return {
@@ -53,7 +85,7 @@ function fromRow(r) {
     notified: !!r.notified,
   };
 }
-function toRow(t) {
+function toRow(t, room) {
   const row = {};
   if ("id" in t) row.id = t.id;
   if ("text" in t) row.text = t.text;
@@ -62,6 +94,7 @@ function toRow(t) {
   if ("repeat" in t) row.repeat = t.repeat;
   if ("done" in t) row.done = t.done;
   if ("notified" in t) row.notified = t.notified;
+  if (room !== undefined) row.room = room;
   return row;
 }
 
@@ -71,7 +104,10 @@ async function init() {
     realtime: { params: { eventsPerSecond: 5 } },
   });
 
+  let room = resolveRoom();
   let tasks = [];
+  let channel = null;
+  let pushEndpoint = null; // set once push is enabled, so room changes can follow
   const taskListeners = [];
   const pushListeners = [];
 
@@ -79,20 +115,29 @@ async function init() {
     const { data, error } = await sb
       .from("tasks")
       .select("*")
+      .eq("room", room)
       .order("created", { ascending: false });
     if (error) { console.warn("[PixelPal] fetch error:", error); return; }
     tasks = (data || []).map(fromRow);
     taskListeners.forEach((cb) => cb(tasks.slice()));
   }
 
-  // Initial load, then live updates on every insert/update/delete.
-  await refetch();
-  sb.channel("tasks-realtime")
-    .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, refetch)
-    .subscribe();
+  function listen() {
+    if (channel) { try { sb.removeChannel(channel); } catch (_) {} }
+    channel = sb
+      .channel("tasks-" + room)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tasks", filter: "room=eq." + room },
+        refetch
+      )
+      .subscribe();
+  }
 
-  // Relay messages the service worker sends when a push arrives in the
-  // foreground, so open tabs can react in-app too.
+  await refetch();
+  listen();
+
+  // Foreground push relay from the service worker -> open tabs.
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.addEventListener("message", (ev) => {
       const d = ev.data || {};
@@ -108,8 +153,21 @@ async function init() {
     subscribe(cb) { taskListeners.push(cb); cb(tasks.slice()); },
     onPush(cb) { pushListeners.push(cb); },
 
+    getRoom() { return room; },
+    async setRoom(code) {
+      room = normalizeRoom(code); // falsy -> brand new room
+      localStorage.setItem(ROOM_KEY, room);
+      // keep this device's push registration pointed at the new room
+      if (pushEndpoint) {
+        await sb.from("push_subscriptions").update({ room }).eq("endpoint", pushEndpoint);
+      }
+      await refetch();
+      listen();
+      return room;
+    },
+
     async add(task) {
-      const { error } = await sb.from("tasks").insert(toRow(task));
+      const { error } = await sb.from("tasks").insert(toRow(task, room));
       if (error) console.warn("[PixelPal] add failed:", error);
     },
     async update(id, patch) {
@@ -120,12 +178,11 @@ async function init() {
       await sb.from("tasks").delete().eq("id", id);
     },
     async clearDone() {
-      await sb.from("tasks").delete().eq("done", true);
+      await sb.from("tasks").delete().eq("room", room).eq("done", true);
     },
 
-    // Ask for permission, subscribe to Web Push, and save the subscription
-    // so the Edge Function can deliver reminders. Returns "push" | "local"
-    // | "denied".
+    // Ask permission, subscribe to Web Push, and save the subscription
+    // (tagged with this room). Returns "push" | "local" | "denied".
     async enablePush() {
       if (!("Notification" in window)) return "denied";
       let perm = Notification.permission;
@@ -150,8 +207,9 @@ async function init() {
           });
         }
         const json = sub.toJSON();
+        pushEndpoint = json.endpoint;
         await sb.from("push_subscriptions").upsert(
-          { endpoint: json.endpoint, subscription: json, created: Date.now() },
+          { endpoint: json.endpoint, subscription: json, room, created: Date.now() },
           { onConflict: "endpoint" }
         );
         return "push";

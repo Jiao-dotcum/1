@@ -6,9 +6,10 @@
 -- opens access to the anon key.
 -- ============================================================
 
--- ---- shared task list ----
+-- ---- shared task list (scoped by room code) ----
 create table if not exists public.tasks (
   id        text primary key,
+  room      text   not null default 'global',
   text      text   not null,
   created   bigint not null,
   remind_at bigint not null,
@@ -16,26 +17,31 @@ create table if not exists public.tasks (
   done      boolean not null default false,
   notified  boolean not null default false
 );
+-- safe if the table already existed without the room column
+alter table public.tasks add column if not exists room text not null default 'global';
 
--- speeds up the "what's due?" scan the Edge Function runs every minute
-create index if not exists tasks_due_idx
-  on public.tasks (notified, done, remind_at);
+-- speeds up the per-room list + the "what's due?" scan the function runs
+create index if not exists tasks_room_idx on public.tasks (room, created desc);
+create index if not exists tasks_due_idx  on public.tasks (notified, done, remind_at);
 
--- ---- Web Push subscriptions (one row per device/browser) ----
+-- ---- Web Push subscriptions (one row per device/browser, tagged by room) ----
 create table if not exists public.push_subscriptions (
   endpoint     text primary key,
   subscription jsonb  not null,
+  room         text,
   created      bigint not null
 );
+alter table public.push_subscriptions add column if not exists room text;
 
 -- ---- realtime: stream task changes to every open client ----
 alter publication supabase_realtime add table public.tasks;
 
 -- ============================================================
 -- Access policies
--- NOTE: you chose ONE GLOBAL LIST everyone shares, so anon (anyone with
--- the site URL) can read/write tasks. Tighten these later (add Supabase
--- Auth or a shared secret) if you want it private.
+-- NOTE: lists are scoped by an unguessable ROOM CODE that acts as a shared
+-- secret — the client only ever reads/writes its own room. These policies
+-- stay open to the anon key (no login needed); the privacy comes from the
+-- room code. For hard guarantees, add Supabase Auth and filter by user.
 -- ============================================================
 alter table public.tasks enable row level security;
 alter table public.push_subscriptions enable row level security;

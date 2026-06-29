@@ -59,8 +59,14 @@ python3 -m http.server 8000   # then visit http://localhost:8000
 Out of the box, Pixel Pal is **on-device only** (the header pill reads
 `on-device`). Turn on a free **Supabase** backend and it becomes a **shared
 live list** — when anyone speaks *"reservation, 7 PM Friday"*, it pops up on
-**every** open device instantly — plus **real phone push that rings even when
-the site is closed**. The pill flips to `LIVE · shared`.
+**every** device in the same **room** instantly — plus **real phone push that
+rings even when the site is closed**. The pill flips to `LIVE · shared`.
+
+Lists are private to a **room code** (a memorable code like `tiger-comet-204`).
+Everyone who enters the same code shares that list and gets its reminders;
+anyone else sees nothing. A fresh code is created automatically on first run —
+tap the **👥 room** chip in the header to copy it, share an invite link, start a
+new room, or join someone else's.
 
 Supabase's free tier needs **no credit card**. (Firebase's equivalent forces a
 billing card for its scheduled function — that's why we use Supabase.)
@@ -122,9 +128,10 @@ On your phone, open that URL → **Add to Home Screen** → launch it from the i
 allow notifications. The home-screen install is what makes push ring reliably
 (iOS requires it for web push).
 
-> ⚠️ You chose **one global list everyone shares**, so the rules are open:
-> anyone with the URL can read/edit the tasks. To lock it down later, add
-> Supabase Auth or a shared secret and tighten the policies in
+> 🔒 Lists are scoped by an unguessable **room code** that works as a shared
+> secret — the app only ever reads/writes its own room. The Supabase policies
+> stay open to the anon key (no login), so privacy rests on the code. For hard
+> guarantees, add Supabase Auth and filter by user in
 > [`supabase/schema.sql`](supabase/schema.sql).
 
 If Supabase is off or can't load, the app silently falls back to the private

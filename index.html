@@ -38,6 +38,9 @@
         <span class="sync-pill" id="syncPill" title="Connection status">
           <span class="sync-dot"></span><span id="syncText">…</span>
         </span>
+        <button class="room-pill" id="roomPill" hidden title="Your shared room — tap to share or switch">
+          👥&nbsp;<span id="roomName">—</span>
+        </button>
       </div>
       <div class="stats">
         <div class="stat" title="Tasks completed give XP. Level up!">
@@ -137,6 +140,28 @@
       <div class="modal-actions">
         <button class="btn-ghost" id="manualCancel">cancel</button>
         <button class="btn-primary" id="manualSave">add quest</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== ROOM MODAL ===== -->
+  <div class="modal-overlay" id="roomModal" hidden>
+    <div class="modal">
+      <h3>Your room</h3>
+      <p class="room-help">Everyone who uses this code shares the same task list and
+        gets its reminders. Share it with the people you want in — keep it private
+        from everyone else.</p>
+      <div class="room-code-box">
+        <span id="roomCodeBig">—</span>
+        <button class="mini-btn" id="roomCopy" title="Copy code">copy</button>
+      </div>
+      <button class="btn-ghost room-share" id="roomShare">🔗 copy invite link</button>
+      <div class="room-divider"><span>or join another room</span></div>
+      <input type="text" id="roomInput" placeholder="e.g. tiger-comet-204" maxlength="40" />
+      <div class="modal-actions">
+        <button class="btn-ghost" id="roomNew" title="Start a fresh empty room">✦ new room</button>
+        <button class="btn-ghost" id="roomCancel">close</button>
+        <button class="btn-primary" id="roomJoin">join</button>
       </div>
     </div>
   </div>
