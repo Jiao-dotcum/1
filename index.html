@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PIXEL PAL — Voice Task Reminder</title>
+  <meta name="description" content="Speak your tasks, and your pixel buddy keeps reminding you. A fun, ADHD-friendly voice task reminder." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%237b5cff'/><rect x='4' y='5' width='2' height='2' fill='white'/><rect x='10' y='5' width='2' height='2' fill='white'/><rect x='5' y='10' width='6' height='2' fill='white'/></svg>" />
+
+  <!-- installable app (PWA) -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#7b5cff" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Pixel Pal" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+
+  <!-- data layer (realtime sync + push); falls back to on-device if not configured -->
+  <script type="module" src="store.js"></script>
+</head>
+<body>
+  <!-- Animated starfield background -->
+  <canvas id="stars" aria-hidden="true"></canvas>
+
+  <div id="scanlines" aria-hidden="true"></div>
+
+  <main class="app">
+    <!-- ===== HEADER ===== -->
+    <header class="topbar">
+      <div class="logo">
+        <span class="logo-mark" aria-hidden="true">►</span>
+        <h1>PIXEL&nbsp;PAL</h1>
+        <span class="sync-pill" id="syncPill" title="Connection status">
+          <span class="sync-dot"></span><span id="syncText">…</span>
+        </span>
+        <button class="room-pill" id="roomPill" hidden title="Your shared room — tap to share or switch">
+          👥&nbsp;<span id="roomName">—</span>
+        </button>
+      </div>
+      <div class="stats">
+        <div class="stat" title="Tasks completed give XP. Level up!">
+          <span class="stat-label">LVL</span>
+          <span class="stat-value" id="statLevel">1</span>
+        </div>
+        <div class="stat xp-stat" title="Experience points">
+          <span class="stat-label">XP</span>
+          <div class="xpbar"><div class="xpbar-fill" id="xpFill"></div></div>
+          <span class="stat-value" id="statXp">0</span>
+        </div>
+        <div class="stat" title="Day streak">
+          <span class="stat-label">🔥</span>
+          <span class="stat-value" id="statStreak">0</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- ===== MAIN GRID ===== -->
+    <section class="grid">
+      <!-- LEFT: the pixel buddy + mic -->
+      <div class="panel buddy-panel">
+        <div class="buddy-stage">
+          <canvas id="buddy" width="160" height="160" aria-label="Your pixel buddy"></canvas>
+          <div class="buddy-shadow"></div>
+        </div>
+
+        <div class="speech-bubble" id="speechBubble">
+          <span id="buddyText">Hi! Tap the mic and tell me what to remember.</span>
+        </div>
+
+        <button id="micBtn" class="mic-btn" aria-pressed="false" aria-label="Hold to speak a task">
+          <span class="mic-ring"></span>
+          <span class="mic-ico" aria-hidden="true">🎙️</span>
+          <span class="mic-label">TAP TO SPEAK</span>
+        </button>
+
+        <div class="live-transcript" id="liveTranscript" aria-live="polite"></div>
+
+        <div class="quick-tools">
+          <label class="when-label">remind me in</label>
+          <div class="chip-row" id="whenChips">
+            <button class="chip active" data-min="0">now-ish</button>
+            <button class="chip" data-min="10">10m</button>
+            <button class="chip" data-min="30">30m</button>
+            <button class="chip" data-min="60">1h</button>
+            <button class="chip" data-min="180">3h</button>
+          </div>
+          <div class="repeat-row">
+            <label class="switch">
+              <input type="checkbox" id="repeatToggle" />
+              <span class="switch-track"><span class="switch-knob"></span></span>
+              <span class="switch-text">nag me until done</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: the task list -->
+      <div class="panel list-panel">
+        <div class="list-head">
+          <h2>YOUR QUESTS</h2>
+          <div class="list-actions">
+            <button class="mini-btn install-btn" id="installBtn" title="Install Pixel Pal as an app" hidden>⬇ install</button>
+            <button class="mini-btn" id="alertsBtn" title="Turn on phone notifications">🔔 alerts</button>
+            <button class="mini-btn" id="addManualBtn" title="Type a task instead">⌨ type</button>
+            <button class="mini-btn" id="soundBtn" title="Toggle sound">🔊</button>
+          </div>
+        </div>
+
+        <div class="empty-state" id="emptyState">
+          <div class="empty-art" aria-hidden="true">
+            <div class="empty-chest">📦</div>
+          </div>
+          <p>No quests yet!</p>
+          <small>Speak a task and it'll appear here, then I'll keep nudging you. 💜</small>
+        </div>
+
+        <ul class="task-list" id="taskList"></ul>
+
+        <footer class="list-foot">
+          <span id="taskCount">0 active</span>
+          <button class="text-btn" id="clearDone">clear completed</button>
+        </footer>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===== TOAST / NOTIFICATION STACK ===== -->
+  <div class="toast-stack" id="toastStack" aria-live="assertive"></div>
+
+  <!-- ===== MANUAL ADD MODAL ===== -->
+  <div class="modal-overlay" id="manualModal" hidden>
+    <div class="modal">
+      <h3>Type a quest</h3>
+      <input type="text" id="manualInput" placeholder="e.g. Drink water 💧" maxlength="120" />
+      <div class="modal-actions">
+        <button class="btn-ghost" id="manualCancel">cancel</button>
+        <button class="btn-primary" id="manualSave">add quest</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== ROOM MODAL ===== -->
+  <div class="modal-overlay" id="roomModal" hidden>
+    <div class="modal">
+      <h3>Your room</h3>
+      <p class="room-help">Everyone who uses this code shares the same task list and
+        gets its reminders. Share it with the people you want in — keep it private
+        from everyone else.</p>
+      <div class="room-code-box">
+        <span id="roomCodeBig">—</span>
+        <button class="mini-btn" id="roomCopy" title="Copy code">copy</button>
+      </div>
+      <button class="btn-ghost room-share" id="roomShare">🔗 copy invite link</button>
+      <div class="room-divider"><span>or join another room</span></div>
+      <input type="text" id="roomInput" placeholder="e.g. tiger-comet-204" maxlength="40" />
+      <div class="modal-actions">
+        <button class="btn-ghost" id="roomNew" title="Start a fresh empty room">✦ new room</button>
+        <button class="btn-ghost" id="roomCancel">close</button>
+        <button class="btn-primary" id="roomJoin">join</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Level-up overlay -->
+  <div class="levelup" id="levelup" hidden>
+    <div class="levelup-inner">
+      <div class="levelup-burst">★</div>
+      <h2>LEVEL UP!</h2>
+      <p id="levelupText">You reached Level 2</p>
+    </div>
+  </div>
+
+  <script defer src="app.js"></script>
+</body>
+</html>

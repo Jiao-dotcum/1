@@ -1,0 +1,18 @@
+# Node / tooling
+node_modules/
+*.log
+
+# Supabase CLI
+supabase/.branches/
+supabase/.temp/
+.env
+.env.*
+
+# Never commit secrets (VAPID private key, service_role key)
+*.secret
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
