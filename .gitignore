@@ -1,0 +1,9 @@
+node_modules/
+
+# Synthetic pipeline demonstration. Regenerate with `npm run demo`.
+# Never commit it: nothing under demo/ is real data and none of it may be cited.
+demo/
+
+# Local scratch
+*.log
+.DS_Store

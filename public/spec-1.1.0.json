@@ -1,0 +1,28 @@
+{
+  "ticker": "APCCI",
+  "version": "1.1.0",
+  "status": "pending_calibration",
+  "anchor_basis": "empirical percentiles of full FRED history",
+  "calibrated": false,
+  "anchors": null,
+  "weights": {
+    "hy_oas": 0.3,
+    "ccc_oas": 0.2,
+    "ig_oas": 0.2,
+    "nfci": 0.2,
+    "vix": 0.1
+  },
+  "percentile_grid": [
+    0,
+    5,
+    25,
+    50,
+    75,
+    90,
+    95,
+    99,
+    100
+  ],
+  "note": "Anchors have not been generated. Run `node scripts/calibrate.mjs` with FRED access (or `--from-dir <dir>` over downloaded CSVs) to produce data/calibration/v1.1.0.json. Until then v1.1.0 publishes nothing.",
+  "disclaimer": "APCCI measures credit conditions, not returns. It is not a forecast, not investment advice, and carries no performance claim."
+}

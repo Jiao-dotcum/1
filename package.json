@@ -1,0 +1,20 @@
+{
+  "name": "apcci",
+  "version": "1.1.0",
+  "description": "AP Credit Cycle Index (APCCI) — a published, citable 0-100 index of US credit conditions computed from five public FRED series.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "calibrate": "node scripts/calibrate.mjs",
+    "publish:index": "node scripts/publish.mjs",
+    "site": "node scripts/build-site.mjs",
+    "serve": "node scripts/serve.mjs",
+    "demo": "node scripts/demo.mjs",
+    "verify": "node scripts/verify.mjs",
+    "test": "node --test test/*.test.js"
+  }
+}

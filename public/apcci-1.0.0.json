@@ -1,0 +1,10 @@
+{
+  "ticker": "APCCI",
+  "version": "1.0.0",
+  "status": "published",
+  "count": 0,
+  "generated_at": "2026-07-25T06:43:59.759Z",
+  "methodology": "APCCI_METHODOLOGY.md",
+  "disclaimer": "APCCI measures credit conditions, not returns. It is not a forecast, not investment advice, and carries no performance claim.",
+  "observations": []
+}

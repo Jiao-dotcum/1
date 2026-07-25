@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APCCI 1.1.0 &mdash; AP Credit Cycle Index</title>
+<meta name="description" content="AP Credit Cycle Index (APCCI): a published, citable 0-100 index of US credit conditions built from five public FRED series. Every value is reproducible by hand.">
+<style>
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:400;font-display:swap;
+  src:url("fonts/ibm-plex-mono-normal-400.woff2") format("woff2")}
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:500;font-display:swap;
+  src:url("fonts/ibm-plex-mono-normal-500.woff2") format("woff2")}
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:600;font-display:swap;
+  src:url("fonts/ibm-plex-mono-normal-600.woff2") format("woff2")}
+@font-face{font-family:"Playfair Display";font-style:normal;font-weight:400 700;font-display:swap;
+  src:url("fonts/playfair-display-normal-400.woff2") format("woff2")}
+
+:root{
+  color-scheme:light;
+  --blue:#1f1fe6; --blue-deep:#1212a8; --blue-soft:#6a6aff;
+  --paper:#fdfdff; --tint:#f2f2ff; --ink:#12123a; --rule:rgba(31,31,230,.28);
+  --edge:#1f1fe6;
+  --frame:14px;
+  --serif:"Playfair Display",Georgia,"Times New Roman",serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:where(:not([data-theme="light"])){
+    color-scheme:dark;
+    --blue:#7b7bff; --blue-deep:#a6a6ff; --blue-soft:#4a4ad0;
+    --paper:#0b0b1c; --tint:#14142e; --ink:#e6e6ff; --rule:rgba(123,123,255,.32);
+    --edge:#1c1c6e;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --blue:#7b7bff; --blue-deep:#a6a6ff; --blue-soft:#4a4ad0;
+  --paper:#0b0b1c; --tint:#14142e; --ink:#e6e6ff; --rule:rgba(123,123,255,.32);
+  --edge:#1c1c6e;
+}
+*{box-sizing:border-box}
+html{background:var(--edge)}
+body{margin:0;background:var(--edge);font-family:var(--sans);font-size:14.5px;line-height:1.6;
+  color:var(--ink);-webkit-font-smoothing:antialiased}
+.sheet{background:var(--paper);margin:var(--frame);padding:44px clamp(20px,5vw,64px) 0;position:relative}
+.sheet::before,.sheet::after{content:"";position:absolute;width:14px;height:14px;border:2px solid var(--edge)}
+.sheet::before{top:10px;left:10px;border-right:0;border-bottom:0}
+.sheet::after{bottom:10px;right:10px;border-left:0;border-top:0}
+a{color:var(--blue);text-decoration:none;border-bottom:1px solid var(--rule)}
+a:hover{border-bottom-color:var(--blue)}
+h1,h2,h3{margin:0;font-family:var(--serif);font-weight:400;letter-spacing:.005em;
+  text-transform:uppercase;color:var(--blue);line-height:1.02}
+p{max-width:70ch}
+
+/* boxed uppercase mono tag */
+.tag{display:inline-block;font-family:var(--mono);font-size:10.5px;font-weight:500;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--blue);border:1px solid var(--blue);padding:3px 8px 2px;
+  white-space:nowrap}
+.tag.fill{background:var(--blue);color:var(--paper)}
+.idx{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;color:var(--blue);opacity:.75;
+  text-transform:uppercase}
+
+header{border-bottom:2px solid var(--blue);padding-bottom:26px}
+header h1{font-size:clamp(30px,5.6vw,60px);margin:16px 0 0;max-width:19ch}
+header .lede{margin:18px 0 0;color:var(--ink);opacity:.85;max-width:68ch}
+.vtabs{display:flex;gap:8px;margin-top:22px;flex-wrap:wrap}
+
+section{padding:34px 0;border-bottom:1px solid var(--rule)}
+.sechead{display:flex;align-items:baseline;gap:14px;margin-bottom:20px;flex-wrap:wrap}
+.sechead h2{font-size:clamp(19px,2.6vw,27px)}
+.sechead .idx{flex:none}
+.sechead .right{margin-left:auto}
+
+/* hero */
+.hero{display:grid;grid-template-columns:minmax(0,auto) minmax(240px,1fr);gap:34px;align-items:end}
+.heroval{font-family:var(--serif);font-size:clamp(76px,15vw,150px);line-height:.82;color:var(--blue);
+  font-feature-settings:"lnum" 1}
+.herotags{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.stats{list-style:none;margin:0;padding:0}
+.stats li{display:flex;align-items:baseline;gap:8px;font-family:var(--mono);font-size:12px;
+  letter-spacing:.06em;padding:5px 0;text-transform:uppercase}
+.stats .k{color:var(--blue);opacity:.8;white-space:nowrap}
+.stats .fill{flex:1;border-bottom:1px dotted var(--rule);transform:translateY(-3px);min-width:14px}
+.stats .v{font-weight:500;white-space:nowrap}
+
+figure{margin:0}
+svg{display:block;width:100%;height:auto}
+figcaption{font-family:var(--mono);font-size:11px;letter-spacing:.05em;color:var(--blue);opacity:.8;
+  margin-top:12px;text-transform:uppercase;line-height:1.7}
+
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:12.5px;
+  font-variant-numeric:tabular-nums;min-width:660px}
+th,td{text-align:right;padding:11px 14px;border-bottom:1px solid var(--rule);white-space:nowrap;
+  vertical-align:top}
+th:first-child,td:first-child{text-align:left;white-space:normal}
+thead th{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--blue);font-weight:500;
+  border-bottom:1px solid var(--blue)}
+tfoot td{border-top:2px solid var(--blue);border-bottom:0;font-weight:600;color:var(--blue);
+  font-size:13.5px;text-transform:uppercase;letter-spacing:.06em}
+td .sub{display:block;font-size:10.5px;letter-spacing:.04em;color:var(--blue);opacity:.7;
+  white-space:normal;margin-top:4px;text-transform:uppercase}
+td a{border-bottom-style:dotted}
+
+.plates{display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:28px}
+.plate{margin:0}
+.plate h3{font-size:clamp(19px,2.3vw,27px);margin:9px 0 15px;max-width:14ch}
+.plate img{width:100%;height:auto;display:block;border:1px solid var(--rule);background:var(--tint)}
+.platecap{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--blue);opacity:.82;line-height:1.85;margin:14px 0 0;max-width:none}
+
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:12px}
+.card{border:1px solid var(--blue);padding:15px 17px;background:var(--tint)}
+.card .k{font-family:var(--mono);font-size:10px;letter-spacing:.15em;text-transform:uppercase;
+  color:var(--blue);opacity:.8}
+.card .v{font-family:var(--mono);font-size:13px;margin-top:9px;word-break:break-all}
+.card .v a{border-bottom:1px solid var(--rule)}
+
+.note{border:1px solid var(--blue);border-left:5px solid var(--blue);padding:16px 18px;background:var(--tint)}
+.note.loud{background:var(--blue);color:var(--paper);border-color:var(--blue)}
+.note.loud strong{color:var(--paper)}
+ol.steps{padding-left:0;list-style:none;counter-reset:s;max-width:76ch;margin:0}
+ol.steps li{counter-increment:s;position:relative;padding-left:38px;margin-bottom:13px}
+ol.steps li::before{content:"[" counter(s) "]";position:absolute;left:0;top:1px;font-family:var(--mono);
+  font-size:11px;letter-spacing:.08em;color:var(--blue)}
+code{font-family:var(--mono);font-size:12.5px;border:1px solid var(--rule);padding:1px 5px;background:var(--tint)}
+pre{font-family:var(--mono);font-size:12px;border:1px solid var(--blue);background:var(--tint);
+  padding:16px 18px;overflow-x:auto;margin:0;line-height:1.75}
+.fine{font-family:var(--mono);font-size:11px;letter-spacing:.05em;color:var(--blue);opacity:.78;
+  text-transform:uppercase;line-height:1.75;margin-top:14px;max-width:105ch}
+
+footer{padding:30px 0 0}
+.wordmark{font-family:var(--serif);font-size:clamp(88px,25vw,300px);line-height:.74;color:var(--blue);
+  text-transform:uppercase;margin:26px -.06em -.16em -.055em;overflow:hidden;user-select:none}
+.colophon{font-family:var(--mono);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--blue);opacity:.8;line-height:2;padding-bottom:22px}
+
+#tip{position:fixed;pointer-events:none;opacity:0;transition:opacity .08s;background:var(--blue);
+  color:var(--paper);padding:7px 11px;font-family:var(--mono);font-size:11.5px;letter-spacing:.07em;
+  text-transform:uppercase;z-index:9;white-space:nowrap}
+@media (max-width:640px){
+  .hero{grid-template-columns:1fr;gap:20px;align-items:start}
+  .sheet{padding-top:30px}
+}
+</style>
+</head><body>
+<div class="sheet">
+
+<header>
+  <span class="tag fill">AP Credit Cycle Index</span>
+  <span class="tag">Ticker APCCI</span>
+  <h1>A 0&ndash;100 reading of US credit conditions</h1>
+  <p class="lede">Computed each business day from five public FRED series. 0 is the loosest credit
+  conditions on the reference scale, 100 the tightest. Every published value is reproducible by hand from
+  FRED and the methodology, and values are never revised &mdash; a correction is a new observation under a
+  new version, never an edit to an old one. <strong>APCCI measures conditions, not returns.</strong> It is
+  not a forecast, not investment advice, and carries no performance claim.</p>
+  <nav class="vtabs"><a class="tag fill" href="index.html" aria-current="true">v1.1.0 &nbsp;0 obs</a><a class="tag" href="v1.0.0.html" aria-current="false">v1.0.0 &nbsp;0 obs</a></nav>
+</header>
+
+<section>
+  <div class="sechead"><span class="idx">[01]</span><h2>Current value</h2>
+    <span class="idx right">Generated 2026-07-25 06:43Z</span></div>
+  <div class="note"><strong>No values are published for version 1.1.0.</strong><br>
+Anchors have not been generated. Run `node scripts/calibrate.mjs` with FRED access (or `--from-dir &lt;dir&gt;` over downloaded CSVs) to produce data/calibration/v1.1.0.json. Until then v1.1.0 publishes nothing.<br><br>
+An empty series is the correct state here rather than a placeholder number: an index that has not been
+computed from complete inputs must show nothing at all.</div>
+</section>
+
+<section>
+  <div class="sechead"><span class="idx">[02]</span><h2>Published history</h2>
+    <span class="idx right">Append-only &middot; never restated</span></div>
+  <div class="note">A chart needs at least two published observations. There are 0.</div>
+</section>
+
+
+
+<section>
+  <div class="sechead"><span class="idx">[03]</span><h2>Verify it yourself</h2>
+    <span class="idx right">About five minutes</span></div>
+  <p>Verification steps appear once a value is published.</p>
+</section>
+
+<section>
+  <div class="sechead"><span class="idx">[04]</span><h2>What the index promises</h2>
+    <span class="idx right">Three rules, no exceptions</span></div>
+  <div class="plates"><figure class="plate">
+    <div class="idx">#1 &nbsp;Reproducible</div>
+    <h3>Checkable by hand</h3>
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="art/reproducible-dark.png">
+      <img src="art/reproducible-light.png" alt="" aria-hidden="true" width="620" height="400" loading="lazy">
+    </picture>
+    <p class="platecap">Five public FRED series, fixed weights, piecewise-linear anchors and rounding specified to the decimal place. Nothing is proprietary and nothing is hidden behind a model.</p>
+  </figure><figure class="plate">
+    <div class="idx">#2 &nbsp;Append-only</div>
+    <h3>Never restated</h3>
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="art/append-only-dark.png">
+      <img src="art/append-only-light.png" alt="" aria-hidden="true" width="620" height="400" loading="lazy">
+    </picture>
+    <p class="platecap">A published value is final. The store refuses UPDATE and DELETE outright, so a number that has been cited cannot quietly become a different number later.</p>
+  </figure><figure class="plate">
+    <div class="idx">#3 &nbsp;Versioned</div>
+    <h3>Changes fork</h3>
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="art/versioned-dark.png">
+      <img src="art/versioned-light.png" alt="" aria-hidden="true" width="620" height="400" loading="lazy">
+    </picture>
+    <p class="platecap">Any change to inputs, weights or anchors creates a new version alongside the old one. Corrections are new observations, never edits, and every version stays live forever.</p>
+  </figure></div>
+</section>
+
+<section>
+  <div class="sechead"><span class="idx">[05]</span><h2>Download the series</h2>
+    <span class="idx right">No scraping required</span></div>
+  <div class="cards">
+    <div class="card"><div class="k">CSV &middot; this version</div>
+      <div class="v"><a href="apcci-1.1.0.csv">apcci-1.1.0.csv</a></div></div>
+    <div class="card"><div class="k">JSON &middot; this version</div>
+      <div class="v"><a href="apcci-1.1.0.json">apcci-1.1.0.json</a></div></div>
+    <div class="card"><div class="k">CSV &middot; all versions</div>
+      <div class="v"><a href="apcci-all.csv">apcci-all.csv</a></div></div>
+    <div class="card"><div class="k">Spec &middot; weights &amp; anchors</div>
+      <div class="v"><a href="spec-1.1.0.json">spec-1.1.0.json</a></div></div>
+  </div>
+  <p class="fine">CSV columns: ticker, version, obs_date, value, band. The JSON additionally carries the
+  full component breakdown for every observation, so the arithmetic above can be checked for any past
+  date, not just today.</p>
+</section>
+
+<section>
+  <div class="sechead"><span class="idx">[06]</span><h2>Versions</h2>
+    <span class="idx right">Both series coexist permanently</span></div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Version</th><th>Status</th><th>Observations</th><th>First</th><th>Last</th></tr></thead>
+    <tbody><tr><td>1.1.0<span class="sub">empirical percentiles of full FRED history</span></td>
+<td>pending_calibration</td><td>0</td><td>—</td><td>—</td></tr><tr><td>1.0.0<span class="sub">named historical episodes and approximate medians</span></td>
+<td>published</td><td>0</td><td>—</td><td>—</td></tr></tbody>
+  </table></div>
+  <p class="fine">A change to inputs, weights or anchors creates a new version. Existing versions are
+  never recomputed, so a citation naming a version and a date always resolves to the same number.</p>
+</section>
+
+<section>
+  <div class="sechead"><span class="idx">[07]</span><h2>Methodology &amp; citation</h2></div>
+  <p>The full specification &mdash; inputs, staleness and plausibility gates, anchor tables for every
+  version, the v1.1.0 calibration procedure and the revision policy &mdash; is in
+  <a href="APCCI_METHODOLOGY.md">APCCI_METHODOLOGY.md</a>.</p>
+  <pre>AP Credit Cycle Index (APCCI), version 1.1.0, observation YYYY-MM-DD.
+Retrieved from apcci-1.1.0.csv. Methodology: APCCI_METHODOLOGY.md.</pre>
+</section>
+
+<footer>
+  <div class="colophon">
+  APCCI 1.1.0 &middot; 0 published observations &middot; generated 2026-07-25 06:43Z<br>
+  Source data: Federal Reserve Bank of St. Louis (FRED). ICE BofA index data &copy; ICE Data Indices, LLC
+  &middot; NFCI &copy; Federal Reserve Bank of Chicago &middot; VIX &copy; Cboe Global Markets.<br>
+  This index measures credit conditions. It is not a return series, not a forecast, and not investment advice.
+  </div>
+  <div class="wordmark" aria-hidden="true">APCCI</div>
+</footer>
+</div>
+<div id="tip" role="status"></div>
+<script>
+(() => {
+  const data = [];
+  const svg = document.querySelector('svg');
+  if (!svg || data.length < 2) return;
+  const hit = svg.querySelector('#hit'), cross = svg.querySelector('#cross'),
+        cdot = svg.querySelector('#cdot'), tip = document.getElementById('tip');
+  const L = 40, R = 84, T = 12, B = 30, W = 1000, H = 320;
+  const iw = W - L - R, ih = H - T - B;
+  const ts = data.map(d => Date.parse(d[0] + 'T00:00:00Z'));
+  const t0 = ts[0], span = Math.max(1, ts[ts.length - 1] - t0);
+  const px = t => L + ((t - t0) / span) * iw;
+  const py = v => T + (1 - Math.min(100, Math.max(0, v)) / 100) * ih;
+  const show = (ev) => {
+    const r = svg.getBoundingClientRect();
+    const vx = ((ev.clientX - r.left) / r.width) * W;
+    const t = t0 + ((vx - L) / iw) * span;
+    let i = 0, best = Infinity;
+    for (let k = 0; k < ts.length; k++) {
+      const dd = Math.abs(ts[k] - t);
+      if (dd < best) { best = dd; i = k; }
+    }
+    const [date, value, band] = data[i];
+    const cx = px(ts[i]), cy = py(value);
+    cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.setAttribute('opacity', '1');
+    cdot.setAttribute('cx', cx); cdot.setAttribute('cy', cy); cdot.setAttribute('opacity', '1');
+    tip.textContent = date + '  ' + value.toFixed(2) + '  ' + band;
+    tip.style.opacity = '1';
+    const sx = r.left + (cx / W) * r.width, sy = r.top + (cy / H) * r.height;
+    tip.style.left = Math.min(window.innerWidth - tip.offsetWidth - 10, Math.max(8, sx + 14)) + 'px';
+    tip.style.top = Math.max(8, sy - tip.offsetHeight - 12) + 'px';
+  };
+  const hide = () => { cross.setAttribute('opacity','0'); cdot.setAttribute('opacity','0'); tip.style.opacity='0'; };
+  hit.addEventListener('pointermove', show);
+  hit.addEventListener('pointerdown', show);
+  hit.addEventListener('pointerleave', hide);
+})();
+</script>
+</body></html>
