@@ -16,7 +16,7 @@
  * one inline script for the chart hover, so anyone can read the source and see
  * that the numbers on screen are the numbers in the CSV.
  */
-import { mkdirSync, writeFileSync, copyFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync, copyFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderPage } from '../src/site/render.js';
@@ -58,32 +58,78 @@ const defaultVersion =
 
 const generatedAt = new Date().toISOString().replace('T', ' ').slice(0, 16) + 'Z';
 const allRows = [];
+const inline = argv.includes('--inline');
+
+/**
+ * Rewrites a page into a single self-contained file: fonts, illustrations and
+ * the downloads become data: URIs. Needed for hosts that serve one HTML file
+ * with no sibling assets, and for handing someone a page that keeps working
+ * when it is saved to disk or emailed on.
+ *
+ * The downloads are embedded verbatim, so the CSV a reader saves from an
+ * inlined page is byte-identical to the one the build wrote.
+ *
+ * Downloads above MAX_INLINE_BYTES are not embedded — the full-component JSON
+ * for a multi-decade daily series runs to tens of megabytes, which would make
+ * the page unopenable. Those links are replaced with a note rather than left
+ * pointing at a file that will not be there, so an inlined page never ships a
+ * dead download.
+ */
+const MAX_INLINE_BYTES = 500 * 1024;
+
+function inlineAssets(html, assets) {
+  let out = html;
+  for (const f of readdirSync(join(root, 'assets', 'fonts'))) {
+    const b64 = readFileSync(join(root, 'assets', 'fonts', f)).toString('base64');
+    out = out.replaceAll(`fonts/${f}`, `data:font/woff2;base64,${b64}`);
+  }
+  for (const plate of PLATES) {
+    for (const theme of Object.keys(INKS)) {
+      const name = `art/${plate.name}-${theme}.png`;
+      const b64 = readFileSync(join(outDir, name)).toString('base64');
+      out = out.replaceAll(name, `data:image/png;base64,${b64}`);
+    }
+  }
+  for (const [name, body, mime] of assets) {
+    if (Buffer.byteLength(body) > MAX_INLINE_BYTES) {
+      const kb = (Buffer.byteLength(body) / 1024).toFixed(0);
+      out = out.replaceAll(
+        `<a href="${name}">${name}</a>`,
+        `${name}<br><span style="opacity:.65">${kb}KB &mdash; too large to embed, ` +
+          `download from the repository</span>`,
+      );
+      continue;
+    }
+    const b64 = Buffer.from(body, 'utf8').toString('base64');
+    out = out.replaceAll(`"${name}"`, `"data:${mime};base64,${b64}" download="${name}"`);
+  }
+  return out;
+}
+
+// Illustrations first: an inlined page embeds them, so they must exist before
+// any page is rendered.
+const artOut = join(outDir, 'art');
+mkdirSync(artOut, { recursive: true });
+for (const plate of PLATES) {
+  for (const [theme, ink] of Object.entries(INKS)) {
+    writeFileSync(join(artOut, `${plate.name}-${theme}.png`), renderPlate(plate.field, ink));
+  }
+}
+
+const histories = new Map(versions.map((v) => [v.version, getHistory(db, v.version)]));
+for (const h of histories.values()) allRows.push(...h);
+allRows.sort((a, b) =>
+  a.version === b.version ? (a.obs_date < b.obs_date ? -1 : 1) : a.version < b.version ? -1 : 1,
+);
+const allCsv = toCsv(allRows);
 
 for (const v of versions) {
-  const history = getHistory(db, v.version);
+  const history = histories.get(v.version);
   const spec = getSpec(v.version);
   const latest = history[history.length - 1] ?? null;
-  allRows.push(...history);
 
-  const html = renderPage({
-    ticker: TICKER,
-    version: v.version,
-    latest,
-    history,
-    spec,
-    versions,
-    defaultVersion,
-    banner,
-    generatedAt,
-  });
-  writeFileSync(
-    join(outDir, v.version === defaultVersion ? 'index.html' : `v${v.version}.html`),
-    html,
-  );
-
-  writeFileSync(join(outDir, `apcci-${v.version}.csv`), toCsv(history));
-  writeFileSync(
-    join(outDir, `apcci-${v.version}.json`),
+  const csv = toCsv(history);
+  const json =
     `${JSON.stringify(
       {
         ticker: TICKER,
@@ -102,34 +148,45 @@ for (const v of versions) {
       },
       null,
       2,
-    )}\n`,
+    )}\n`;
+  const specJson = `${JSON.stringify({ ticker: TICKER, ...spec, disclaimer: DISCLAIMER }, null, 2)}\n`;
+
+  writeFileSync(join(outDir, `apcci-${v.version}.csv`), csv);
+  writeFileSync(join(outDir, `apcci-${v.version}.json`), json);
+  writeFileSync(join(outDir, `spec-${v.version}.json`), specJson);
+
+  let html = renderPage({
+    ticker: TICKER,
+    version: v.version,
+    latest,
+    history,
+    spec,
+    versions,
+    defaultVersion,
+    banner,
+    generatedAt,
+  });
+  if (inline) {
+    html = inlineAssets(html, [
+      [`apcci-${v.version}.csv`, csv, 'text/csv'],
+      [`apcci-${v.version}.json`, json, 'application/json'],
+      [`spec-${v.version}.json`, specJson, 'application/json'],
+      ['apcci-all.csv', allCsv, 'text/csv'],
+    ]);
+  }
+  const page = v.version === defaultVersion ? 'index.html' : `v${v.version}.html`;
+  writeFileSync(join(outDir, page), html);
+
+  console.log(
+    `  ${v.version.padEnd(7)} ${String(history.length).padStart(6)} obs  -> ${page}` +
+      `  ${(Buffer.byteLength(html) / 1024).toFixed(0)}KB`,
   );
-  writeFileSync(
-    join(outDir, `spec-${v.version}.json`),
-    `${JSON.stringify({ ticker: TICKER, ...spec, disclaimer: DISCLAIMER }, null, 2)}\n`,
-  );
-  console.log(`  ${v.version.padEnd(7)} ${String(history.length).padStart(6)} obs  -> ${
-    v.version === defaultVersion ? 'index.html' : `v${v.version}.html`
-  }`);
 }
 
-allRows.sort((a, b) =>
-  a.version === b.version ? (a.obs_date < b.obs_date ? -1 : 1) : a.version < b.version ? -1 : 1,
-);
-writeFileSync(join(outDir, 'apcci-all.csv'), toCsv(allRows));
+writeFileSync(join(outDir, 'apcci-all.csv'), allCsv);
 
 const methodology = join(root, 'docs', 'APCCI_METHODOLOGY.md');
 if (existsSync(methodology)) copyFileSync(methodology, join(outDir, 'APCCI_METHODOLOGY.md'));
-
-// Illustrations, generated from source rather than checked in as binaries.
-// Two tints per plate so the page can swap them by colour scheme.
-const artOut = join(outDir, 'art');
-mkdirSync(artOut, { recursive: true });
-for (const plate of PLATES) {
-  for (const [theme, ink] of Object.entries(INKS)) {
-    writeFileSync(join(artOut, `${plate.name}-${theme}.png`), renderPlate(plate.field, ink));
-  }
-}
 
 // Self-hosted fonts: the page must render identically offline, so a reader can
 // save it, or verify it from a checkout, with no third-party requests.
